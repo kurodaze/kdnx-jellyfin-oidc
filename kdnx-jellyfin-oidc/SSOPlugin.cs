@@ -34,7 +34,7 @@ public class KdnxOidcPlugin : BasePlugin<PluginConfiguration>, IHasWebPages
     /// <summary>
     /// Gets the name of the OIDC plugin.
     /// </summary>
-    public override string Name => "kdnx-jellyfin-oidc";
+    public override string Name => "KDNX OIDC";
 
     /// <summary>
     /// Gets the GUID of the OIDC plugin.
@@ -56,12 +56,12 @@ public class KdnxOidcPlugin : BasePlugin<PluginConfiguration>, IHasWebPages
             },
             new PluginPageInfo
             {
-                Name = Name + ".js",
+                Name = "kdnx-jellyfin-oidc.js",
                 EmbeddedResourcePath = $"{GetType().Namespace}.Config.config.js"
             },
             new PluginPageInfo
             {
-                Name = Name + ".css",
+                Name = "kdnx-jellyfin-oidc.css",
                 EmbeddedResourcePath = $"{GetType().Namespace}.Config.style.css"
             }
         };
