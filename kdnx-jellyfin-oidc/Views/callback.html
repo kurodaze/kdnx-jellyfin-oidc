@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html><head>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<style nonce="___nonce___">
+  body {
+    background: #101010;
+    color: #d1cfce;
+    font-family: Noto Sans, Noto Sans HK, Noto Sans JP, Noto Sans KR, Noto Sans SC, Noto Sans TC, sans-serif;
+  }
+</style>
+</head><body>
+<p>Logging in...</p>
+<noscript>Please enable Javascript to complete the login</noscript>
+<script nonce="___nonce___">
+
+function getDeviceName() {
+    const ua = navigator.userAgent;
+    if (ua.indexOf('Tizen') !== -1) return 'Samsung Smart TV';
+    if (ua.indexOf('Web0S') !== -1 || ua.indexOf('NetCast') !== -1) return 'LG Smart TV';
+    if (ua.indexOf('Xbox') !== -1) return 'Xbox';
+    if (ua.indexOf('PlayStation') !== -1) return 'PlayStation';
+    if (/iPad|iPhone|iPod/.test(ua) || (ua.includes('Mac') && navigator.maxTouchPoints > 1)) return 'iOS Device';
+    if (ua.indexOf('Android') !== -1) return 'Android Device';
+    
+    const match = ua.match(/(Edg|OPR|Chrome|Safari|Firefox)\/?\s*(\d+)/i) || [];
+    const browser = match[1] || 'Web Browser';
+    if (browser === 'Edg') return 'Edge';
+    if (browser === 'OPR') return 'Opera';
+    return browser;
+}
+
+const sleep = (milliseconds) => {
+    return new Promise(resolve => setTimeout(resolve, milliseconds))
+}
+
+
+async function main() {
+    localStorage.removeItem('jellyfin_credentials');
+    document.getElementById('iframe-main').src = "___jsonPunycodeBaseUrl___" + '/web/index.html';
+
+    const data = "___jsonData___";
+    let attempts = 0;
+    while (attempts < 150) {
+        try {
+            if (localStorage.getItem("_deviceId2") != null &&
+                localStorage.getItem("jellyfin_credentials") != null &&
+                JSON.parse(localStorage.getItem("jellyfin_credentials"))['Servers'][0]['Id'] != null) {
+                break;
+            }
+        } catch (e) {
+            // Ignore parse errors, wait for valid data
+        }
+        await sleep(100);
+        attempts++;
+    }
+
+    if (attempts >= 150) {
+        document.querySelector('p').textContent = 'Login timed out waiting for client data. Please try again.';
+        return;
+    }
+    const deviceId = localStorage.getItem("_deviceId2");
+    const appName = "Jellyfin Web";
+    const appVersion = "10.11.10";
+    const deviceName = getDeviceName();
+
+    const request = {deviceId, appName, appVersion, deviceName, data};
+
+
+    const url = "___jsonAuthUrl___";
+
+    let response;
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify(request)
+        });
+        response = res.ok ? await res.text() : undefined;
+    } catch (e) {
+        response = undefined;
+    }
+    if (!response) {
+        document.querySelector('p').textContent = 'Authentication failed. Please close this page and try again.';
+        return;
+    }
+    let responseJson;
+    try {
+        responseJson = JSON.parse(response);
+    } catch (e) {
+        document.querySelector('p').textContent = 'Authentication failed. Please close this page and try again.';
+        return;
+    }
+    const userId = 'user-' + responseJson['User']['Id'] + '-' + responseJson['User']['ServerId'];
+    responseJson['User']['EnableAutoLogin'] = true;
+    localStorage.setItem(userId, JSON.stringify(responseJson['User']));
+    const jfCreds = JSON.parse(localStorage.getItem('jellyfin_credentials'));
+    jfCreds['Servers'][0]['AccessToken'] = responseJson['AccessToken'];
+    jfCreds['Servers'][0]['UserId'] = responseJson['User']['Id'];
+    // Note: Storing the AccessToken in localStorage is the intended and required behavior 
+    // for compatibility with the upstream Jellyfin Web client architecture.
+    localStorage.setItem('jellyfin_credentials', JSON.stringify(jfCreds));
+    localStorage.setItem('enableAutoLogin', 'true');
+    window.location.replace("___jsonPunycodeBaseUrl___" + '/web/index.html');
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    main();
+});
+
+
+</script><iframe id='iframe-main' class='docs-texteventtarget-iframe' sandbox='allow-same-origin allow-forms allow-scripts' src='' style='position: absolute;width:0;height:0;border:0;'></iframe></body></html>

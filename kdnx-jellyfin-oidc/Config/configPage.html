@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>KDNX OIDC</title>
+  </head>
+  <body>
+    <div
+      id="sso-config-page"
+      data-role="page"
+      class="page type-interior pluginConfigurationPage esqConfigurationPage"
+      data-controller="__plugin/kdnx-jellyfin-oidc.js"
+    >
+      <div data-role="content">
+        <div class="content-primary">
+          <div class="sectionTitleContainer flex align-items-center" style="margin-bottom: 1.5em;">
+            <h2 class="sectionTitle" style="font-size: 1.8em; font-weight: 700; background: linear-gradient(90deg, #fff, #aaa); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">KDNX OIDC Settings</h2>
+          </div>
+          <p style="margin-bottom: 2em; color: rgba(255, 255, 255, 0.6); font-size: 0.95em; line-height: 1.5;">
+            <i>Note:</i> Making changes to this configuration requires a restart of the Jellyfin server.
+            <br />
+            This is a streamlined, OIDC-only relying party plugin.
+          </p>
+
+          <form id="sso-new-oidc-provider" class="esqConfigurationForm sso-card">
+            <div class="sso-card-title">Provider Configuration</div>
+
+            <!-- Row 1: Identity & Discovery Endpoint -->
+            <div class="sso-grid-2">
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="OidProviderName">Name of OpenID Provider:</label>
+                <input
+                  is="emby-input"
+                  id="OidProviderName"
+                  required=""
+                  type="text"
+                  class="sso-text"
+                />
+                <div class="fieldDescription">
+                  The name used by Jellyfin to identify the OpenID provider.
+                </div>
+              </div>
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="OidEndpoint">OpenID Endpoint:</label>
+                <input
+                  is="emby-input"
+                  id="OidEndpoint"
+                  required=""
+                  type="text"
+                  class="sso-text"
+                />
+                <div class="fieldDescription">
+                  The OpenID endpoint. Must have a .well-known path available.
+                </div>
+              </div>
+            </div>
+
+            <!-- Row 2: Client Credentials -->
+            <div class="sso-grid-2">
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="OidClientId">OpenID Client ID:</label>
+                <input
+                  is="emby-input"
+                  id="OidClientId"
+                  required=""
+                  type="text"
+                  class="sso-text"
+                />
+                <div class="fieldDescription">
+                  The OpenID client ID.
+                </div>
+              </div>
+
+            </div>
+
+            <!-- Row 3: Scopes & Default Username Claims -->
+            <div class="sso-grid-2">
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="OidScopes">Request Additional Scopes:</label>
+                <textarea
+                  is="emby-textarea"
+                  id="OidScopes"
+                  required=""
+                  type="text"
+                  class="sso-line-list emby-textarea"
+                ></textarea>
+                <div class="fieldDescription">
+                  Specify additional scopes to include in the OIDC request. One scope per line.
+                </div>
+              </div>
+            </div>
+
+            <!-- Enabled Toggle -->
+            <div class="checkboxContainer checkboxContainer-withDescription" style="margin: 1.5em 0;">
+              <label>
+                <input
+                  is="emby-checkbox"
+                  id="Enabled"
+                  name="Enabled"
+                  type="checkbox"
+                  class="sso-toggle"
+                />
+                <span>Enable this OIDC Provider</span>
+              </label>
+            </div>
+
+            <button
+              id="SaveProvider"
+              is="emby-button"
+              type="button"
+              class="raised button-submit block emby-button"
+              style="margin-top: 2em;"
+            >
+              <span>Save Configuration</span>
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

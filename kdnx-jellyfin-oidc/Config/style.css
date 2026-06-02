@@ -1,0 +1,102 @@
+.emby-textarea {
+  display: block;
+  margin: 0;
+  margin-bottom: 0 !important;
+
+  /* Remove select styling */
+
+  /* Font size must the 16px or larger to prevent iOS page zoom on focus */
+  font-size: inherit;
+
+  /* General select styles: change as needed */
+  font-family: inherit;
+  font-weight: inherit;
+  color: inherit;
+  padding: 0.35em 0.25em;
+
+  /* Prevent padding from causing width overflow */
+  box-sizing: border-box;
+  outline: none !important;
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0);
+  width: 100%;
+}
+
+.emby-textarea::-moz-focus-inner {
+  border: 0;
+}
+
+.textareaLabel {
+  display: inline-block;
+  transition: all 0.2s ease-out;
+  margin-bottom: 0.25em;
+}
+
+.emby-textarea + .fieldDescription {
+  margin-top: 0.25em;
+}
+
+.sso-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 2em;
+  margin-bottom: 2em;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.sso-card:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.3);
+}
+
+.sso-card-title {
+  font-size: 1.25em;
+  font-weight: 600;
+  margin-bottom: 1em;
+  color: #fff;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 0.5em;
+}
+
+.sso-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5em;
+  margin-bottom: 1em;
+}
+
+.sso-checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1em;
+  margin-top: 1em;
+}
+
+
+/* button overrides */
+.emby-button.raised {
+  transition: transform 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease !important;
+}
+
+.emby-button.raised:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.15);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.emby-button.raised:active {
+  transform: translateY(0);
+}
+
+/* Mobile responsive fixes */
+@media (max-width: 768px) {
+  .sso-grid-2 {
+    grid-template-columns: 1fr;
+    gap: 1em;
+  }
+
+  .sso-card {
+    padding: 1.25em;
+  }
+}
