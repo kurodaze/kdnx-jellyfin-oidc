@@ -379,13 +379,12 @@ public class SSOController : ControllerBase
 
     private string GetRequestBase()
     {
-        return new UriBuilder
-        {
-            Scheme = "https",
-            Host = Request.Host.Host,
-            Port = -1,
-            Path = Request.PathBase
-        }.ToString().TrimEnd('/');
+        var request = Request;
+        var scheme = request.Headers["X-Forwarded-Proto"].FirstOrDefault() ?? request.Scheme;
+        var host = request.Headers["X-Forwarded-Host"].FirstOrDefault() ?? request.Host.ToString();
+        var pathBase = request.PathBase.ToString();
+        
+        return $"{scheme}://{host}{pathBase}".TrimEnd('/');
     }
 
     private ContentResult ReturnError(int code, string message)
