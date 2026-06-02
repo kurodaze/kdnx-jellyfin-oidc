@@ -2,11 +2,8 @@
 <html><head>
 <meta name='viewport' content='width=device-width, initial-scale=1'>
 <style nonce="___nonce___">
-  body {
-    background: #101010;
-    color: #d1cfce;
-    font-family: Noto Sans, Noto Sans HK, Noto Sans JP, Noto Sans KR, Noto Sans SC, Noto Sans TC, sans-serif;
-  }
+  body { background: #101010; color: #d1cfce; font-family: Noto Sans, Noto Sans HK, Noto Sans JP, Noto Sans KR, Noto Sans SC, Noto Sans TC, sans-serif; }
+  #iframe-main { position: absolute; width: 0; height: 0; border: 0; visibility: hidden; opacity: 0; pointer-events: none; z-index: -1; }
 </style>
 </head><body>
 <p>Logging in...</p>
@@ -110,5 +107,4 @@ document.addEventListener('DOMContentLoaded', function () {
     main();
 });
 
-
-</script><iframe id='iframe-main' sandbox='allow-same-origin allow-forms allow-scripts' src='' style='position: absolute; width: 0px; height: 0px; border: none; visibility: hidden; opacity: 0; pointer-events: none; z-index: -1;'></iframe></body></html>
+</script><iframe id='iframe-main' sandbox='allow-same-origin allow-forms allow-scripts' src=''></iframe></body></html>
