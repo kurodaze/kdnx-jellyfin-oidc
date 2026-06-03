@@ -405,7 +405,7 @@ public class SSOController : ControllerBase
             Authority = config.OidEndpoint?.Trim(),
             ClientId = config.OidClientId?.Trim(),
             RedirectUri = requestBase + $"/sso/OID/redirect/{provider}",
-            Scope = string.Join(" ", scopes.Prepend("openid profile")),
+            Scope = string.Join(" ", new[] { "openid", "profile" }.Concat(scopes).Distinct()),
             DisablePushedAuthorization = false,
             LoggerFactory = _loggerFactory,
             LoadProfile = true,
