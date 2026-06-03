@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 import json
 import urllib.request
@@ -61,7 +62,6 @@ def main():
         tag_name = release.get('tag_name')
         
         # Try to read the build.yaml from the specific tag using git locally
-        import subprocess
         tag_build_yaml_text = None
         try:
             tag_build_yaml_text = subprocess.check_output(

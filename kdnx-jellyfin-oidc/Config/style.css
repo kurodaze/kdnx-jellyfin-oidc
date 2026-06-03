@@ -25,16 +25,6 @@
   border: 0;
 }
 
-.textareaLabel {
-  display: inline-block;
-  transition: all 0.2s ease-out;
-  margin-bottom: 0.25em;
-}
-
-.emby-textarea + .fieldDescription {
-  margin-top: 0.25em;
-}
-
 .sso-card {
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -65,14 +55,6 @@
   gap: 1.5em;
   margin-bottom: 1em;
 }
-
-.sso-checkbox-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1em;
-  margin-top: 1em;
-}
-
 
 /* button overrides */
 .emby-button.raised {
