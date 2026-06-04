@@ -35,7 +35,7 @@ public class SSOController : ControllerBase
     private readonly ICryptoProvider _cryptoProvider;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IMemoryCache _memoryCache;
-    private static readonly string _assemblyVersion = typeof(SSOController).Assembly.GetName().Version.ToString();
+    private static readonly string _assemblyVersion = typeof(SSOController).Assembly.GetName().Version?.ToString() ?? "0.0.0.0";
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SSOController"/> class.

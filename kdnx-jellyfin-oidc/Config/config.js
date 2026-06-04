@@ -30,7 +30,7 @@ const ssoConfigurationPage = {
       current_config.Enabled = page.querySelector("#Enabled").checked;
       
       // Parse scopes from textarea (split by newline and filter out empty)
-      current_config.OidScopes = page.querySelector("#OidScopes").value ? page.querySelector("#OidScopes").value.split("\n") : [];
+      current_config.OidScopes = page.querySelector("#OidScopes").value ? page.querySelector("#OidScopes").value.split("\n").filter(s => s.trim()) : [];
 
       config.OidConfigs = [current_config]; // Always overwrite with the single provider
 
