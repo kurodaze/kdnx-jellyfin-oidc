@@ -169,9 +169,14 @@ public class SSOController : ControllerBase
             return ReturnError(StatusCodes.Status400BadRequest, "Unable to start login. Please try again.");
         }
 
-        var requestBase = GetRequestBase();
+        // redirect_uri must match KDNX registration. Client ID is the public FQDN
+        // (fin.example.com) — never take Host / X-Forwarded-Host from the request.
+        if (!TryGetOidcRedirectUri(config, provider, out var actualRedirectUri, out var redirectError))
+        {
+            return ReturnError(StatusCodes.Status500InternalServerError, redirectError);
+        }
+
         var dummyRedirectUri = $"https://___OIDC_DUMMY_REDIRECT___/sso/OID/redirect/{provider}";
-        var actualRedirectUri = requestBase + $"/sso/OID/redirect/{provider}";
         state.StartUrl = state.StartUrl.Replace(Uri.EscapeDataString(dummyRedirectUri), Uri.EscapeDataString(actualRedirectUri));
         state.RedirectUri = actualRedirectUri;
 
@@ -244,13 +249,8 @@ public class SSOController : ControllerBase
             {
                 if (timedState.Valid)
                 {
-                    Guid? userId = await GetOrCreateUser(timedState.Username, timedState.SubClaim, config).ConfigureAwait(false);
-                    if (userId == null)
-                    {
-                        return ReturnError(StatusCodes.Status401Unauthorized, "Account linking to administrator accounts is disabled.");
-                    }
-
-                    var authenticationResult = await Authenticate(userId.Value, response).ConfigureAwait(false);
+                    Guid userId = await GetOrCreateUser(timedState.Username, timedState.SubClaim).ConfigureAwait(false);
+                    var authenticationResult = await Authenticate(userId, response).ConfigureAwait(false);
                     return Ok(authenticationResult);
                 }
             }
@@ -263,11 +263,12 @@ public class SSOController : ControllerBase
         return Problem("Something went wrong");
     }
 
-    private async Task<Guid?> GetOrCreateUser(string canonicalName, string subClaim, OidConfig config)
+    private async Task<Guid> GetOrCreateUser(string canonicalName, string subClaim)
     {
         var pluginConfig = KdnxOidcPlugin.Instance.Configuration;
         User user = null;
 
+        // Identity is the OIDC `sub` (Discord user id), never username alone.
         if (!string.IsNullOrEmpty(subClaim) && pluginConfig.UserMappings != null)
         {
             var mapping = pluginConfig.UserMappings.FirstOrDefault(m => m.SubClaim == subClaim);
@@ -289,8 +290,7 @@ public class SSOController : ControllerBase
 
             if (user != null)
             {
-                // Username is taken. Discord IDs are used for identity, don't link by name.
-                // Generate a new, unique username by appending a number.
+                // Username taken by an unrelated account — do not link by name.
                 int counter = 1;
                 string newName = $"{canonicalName}{counter}";
                 while (_userManager.GetUserByName(newName) != null)
@@ -315,13 +315,8 @@ public class SSOController : ControllerBase
 
             if (!string.IsNullOrEmpty(subClaim))
             {
-                if (pluginConfig.UserMappings == null)
-                {
-                    pluginConfig.UserMappings = new List<UserMapping>();
-                }
-
-                var mapping = pluginConfig.UserMappings.FirstOrDefault(m => m.SubClaim == subClaim);
-                if (mapping == null)
+                pluginConfig.UserMappings ??= new List<UserMapping>();
+                if (pluginConfig.UserMappings.All(m => m.SubClaim != subClaim))
                 {
                     pluginConfig.UserMappings.Add(new UserMapping { SubClaim = subClaim, UserId = user.Id });
                     KdnxOidcPlugin.Instance.SaveConfiguration();
@@ -361,9 +356,10 @@ public class SSOController : ControllerBase
         }
 
         var endpoint = config.OidEndpoint?.Trim();
-        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out Uri oidEndpointUri))
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out Uri oidEndpointUri)
+            || oidEndpointUri.Scheme != Uri.UriSchemeHttps)
         {
-            return ReturnError(StatusCodes.Status500InternalServerError, "Invalid OIDC Endpoint configured.");
+            return ReturnError(StatusCodes.Status500InternalServerError, "OIDC Endpoint must be an absolute https URL.");
         }
 
         var cacheKey = $"oidcclient_{provider}";
@@ -377,14 +373,37 @@ public class SSOController : ControllerBase
         return null;
     }
 
-    private string GetRequestBase()
+    /// <summary>
+    /// Build the OIDC redirect_uri from configured Client ID (public FQDN).
+    /// KDNX registers clients as resource FQDNs and expects
+    /// https://{client_id}/sso/OID/redirect/{provider}.
+    /// </summary>
+    private static bool TryGetOidcRedirectUri(OidConfig config, string provider, out string redirectUri, out string error)
     {
-        var request = Request;
-        var scheme = request.Headers["X-Forwarded-Proto"].FirstOrDefault() ?? request.Scheme;
-        var host = request.Headers["X-Forwarded-Host"].FirstOrDefault() ?? request.Host.ToString();
-        var pathBase = request.PathBase.ToString();
-        
-        return $"{scheme}://{host}{pathBase}".TrimEnd('/');
+        redirectUri = null;
+        error = null;
+
+        var clientId = config.OidClientId?.Trim();
+        if (string.IsNullOrEmpty(clientId))
+        {
+            error = "OIDC Client ID is not configured.";
+            return false;
+        }
+
+        // Must be a bare hostname (no scheme/path). Matches KDNX resource FQDN.
+        if (clientId.Contains("://", StringComparison.Ordinal)
+            || clientId.Contains('/')
+            || clientId.Contains('\\')
+            || clientId.Contains(' ')
+            || clientId.Contains('?')
+            || clientId.Contains('#'))
+        {
+            error = "OIDC Client ID must be the public hostname only (e.g. fin.example.com).";
+            return false;
+        }
+
+        redirectUri = $"https://{clientId.TrimEnd('.')}/sso/OID/redirect/{provider}";
+        return true;
     }
 
     private ContentResult ReturnError(int code, string message)
@@ -397,17 +416,22 @@ public class SSOController : ControllerBase
         };
     }
 
-    private OidcClient CreateOidcClient(OidConfig config, Uri oidEndpointUri, string provider, string requestBase)
+    private OidcClient CreateOidcClient(OidConfig config, Uri oidEndpointUri, string provider, string dummyOrigin)
     {
-        var scopes = config.OidScopes ?? Array.Empty<string>();
+        // openid + profile always; extras from config (KDNX supports openid/profile).
+        var extraScopes = (config.OidScopes ?? Array.Empty<string>())
+            .Select(s => s?.Trim())
+            .Where(s => !string.IsNullOrEmpty(s));
+
         var options = new OidcClientOptions
         {
             Authority = config.OidEndpoint?.Trim(),
             ClientId = config.OidClientId?.Trim(),
-            RedirectUri = requestBase + $"/sso/OID/redirect/{provider}",
-            Scope = string.Join(" ", new[] { "openid", "profile" }.Concat(scopes).Distinct()),
+            RedirectUri = dummyOrigin + $"/sso/OID/redirect/{provider}",
+            Scope = string.Join(" ", new[] { "openid", "profile" }.Concat(extraScopes!).Distinct(StringComparer.Ordinal)),
             DisablePushedAuthorization = false,
             LoggerFactory = _loggerFactory,
+            // UserInfo over TLS to KDNX after PKCE code exchange; sub must match ID token claims.
             LoadProfile = true,
             HttpClientFactory = o =>
             {
@@ -416,6 +440,11 @@ public class SSOController : ControllerBase
                 return client;
             }
         };
+
+        // Duende default uses NoValidationIdentityTokenValidator when RequireIdentityTokenSignature
+        // is false (channel trust: TLS + PKCE + UserInfo). Default alg list omits EdDSA; add it
+        // so a future signature validator can accept KDNX tokens without another code change.
+        options.Policy.ValidSignatureAlgorithms.Add("EdDSA");
         options.Policy.Discovery.AdditionalEndpointBaseAddresses.Add(oidEndpointUri.GetLeftPart(UriPartial.Authority));
         options.Policy.Discovery.ValidateEndpoints = true;
         options.Policy.Discovery.RequireHttps = true;

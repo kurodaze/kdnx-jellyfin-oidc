@@ -1,6 +1,6 @@
 # kdnx-jellyfin-oidc
 
-A Jellyfin plugin for OpenID Connect (OIDC) authentication. This plugin allows users to log into Jellyfin using an external OIDC Provider.
+A Jellyfin plugin for OpenID Connect (OIDC) authentication. This plugin allows users to log into Jellyfin using an external OIDC Provider (typically KDNX).
 
 ## Installation
 
@@ -14,6 +14,15 @@ A Jellyfin plugin for OpenID Connect (OIDC) authentication. This plugin allows u
 
 ## Configuration
 After installing and restarting Jellyfin, navigate to `Dashboard -> Plugins -> KDNX OIDC`.
+
+Typical KDNX pairing:
+- **Provider name**: `KDNX` (callback path becomes `/sso/OID/redirect/KDNX`)
+- **OpenID Endpoint**: `https://kdnx-auth.yourdomain.tld`
+- **Client ID**: `fin.yourdomain.tld` (public resource hostname only — also used as OIDC `redirect_uri` host)
+- **Additional scopes**: leave empty (`openid` + `profile` are always requested)
+
+KDNX resource: auth **Passthrough**, OIDC redirect path `/sso/OID/redirect/KDNX`.
+See the companion guide in the KDNX repo: `docs/jellyfin-sso.md`.
 
 ## Minimal SSO Button
 
@@ -30,55 +39,50 @@ Login disclaimer:
 Custom CSS:
 
 ```css
-.kdnx-sso { 
-  display: inline-block; 
-  padding: .55rem .8rem; 
-  border: 1px solid currentColor; 
+.kdnx-sso {
+  display: inline-block;
+  padding: .55rem .8rem;
+  border: 1px solid currentColor;
   background: transparent;
-  color: #fff; 
-  text-decoration: none; 
+  color: #fff;
+  text-decoration: none;
   cursor: pointer;
   border-radius: 4px;
 }
-.kdnx-sso:hover { 
-  color: #fff; 
-  text-decoration: none; 
+.kdnx-sso:hover {
+  color: #fff;
+  text-decoration: none;
 }
 ```
 
-## Mobile App Fix (Infinite "Logging in...")
+## Mobile apps (Android and similar WebView clients)
 
-The official Jellyfin Android app has a known bug where external OIDC redirects lose the internal device ID, causing the app to hang infinitely on "Logging in...". 
+### Why SSO used to hang on "Logging in..."
 
-Because the Jellyfin web UI sanitizes inline JavaScript in the branding settings, you must inject a patch script directly into the Jellyfin web files.
+Jellyfin Web stores the client device id in `localStorage` under `_deviceId2`.
+The official Android app exposes the real device id via `window.NativeShell.AppHost.deviceId()`
+and **does not** write `_deviceId2`.
 
-**1. Create `add-oauth-button.js` in your Jellyfin `web` folder** (e.g., `/usr/share/jellyfin/web/add-oauth-button.js`):
-```javascript
-(function waitForBody() {
-  if (!document.body) {
-    return setTimeout(waitForBody, 100);
-  }
-  function oAuthInitDeviceId() {
-    if (!localStorage.getItem('_deviceId2') && window.NativeShell?.AppHost?.deviceId) {
-      localStorage.setItem('_deviceId2', window.NativeShell.AppHost.deviceId());
-    }
-  }
-  const observer = new MutationObserver(() => {
-    const ssoButton = document.querySelector('.kdnx-sso');
-    if (ssoButton) {
-      ssoButton.onclick = oAuthInitDeviceId;
-      observer.disconnect();
-    }
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
-})();
-```
+The SSO callback used to wait only for `_deviceId2`, so mobile sessions never completed.
 
-**2. Modify `index.html`**
-Because Jellyfin's `index.html` is heavily minified (all on one line), the easiest way to insert the script is to run this command in your Jellyfin container/server terminal:
+### Built-in fix (plugin ≥ 1.0.4)
 
-```bash
-sed -i 's|<head>|<head><script type="text/javascript" src="add-oauth-button.js"></script>|' /usr/share/jellyfin/web/index.html
-```
+The callback page now:
 
-Restart your Jellyfin container/server and clear the Android app cache. The login flow will now correctly link your device ID and complete successfully.
+1. Seeds `_deviceId2` from `NativeShell.AppHost.deviceId()` **before** loading jellyfin-web
+2. Falls back to the same API if localStorage is still empty
+3. Uses NativeShell for app name / version / device name when present
+
+No `index.html` patch and no extra scripts under `/usr/share/jellyfin/web/` are required
+for in-app WebView SSO.
+
+**Requirements for mobile SSO to complete in the app:**
+
+- Start login from the **Jellyfin app WebView** (not a random external browser tab)
+- Complete the OIDC redirect back into that same WebView (same origin as Jellyfin)
+
+This plugin only supports OIDC that starts and finishes in that Jellyfin web context.
+There is no Quick Connect path and no alternate client login flow.
+
+After installing/updating the plugin, restart Jellyfin and clear the Android app cache once
+if an old half-login is stuck.

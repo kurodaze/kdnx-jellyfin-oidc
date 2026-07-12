@@ -66,7 +66,7 @@
                   class="sso-text"
                 />
                 <div class="fieldDescription">
-                  The OpenID client ID.
+                  Public resource hostname as registered with KDNX (e.g. fin.example.com). Used as OIDC client_id and redirect_uri host.
                 </div>
               </div>
 
@@ -84,7 +84,7 @@
                   class="sso-line-list emby-textarea"
                 ></textarea>
                 <div class="fieldDescription">
-                  Specify additional scopes to include in the OIDC request. One scope per line.
+                  Extra scopes beyond openid and profile (always requested). One per line. KDNX supports openid and profile only.
                 </div>
               </div>
             </div>
