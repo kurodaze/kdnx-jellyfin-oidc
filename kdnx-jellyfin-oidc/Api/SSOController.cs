@@ -119,7 +119,27 @@ public class SSOController : ControllerBase
             {
                 timedState.Username = usernameClaim.Value;
                 timedState.SubClaim = result.User.FindFirst("sub")?.Value;
+
+                // Require IdP session claims from the identity token (KDNX always issues them).
+                if (!TryGetSessionClaims(result.IdentityToken, out var authTime, out var sessionMaxAge)
+                    || SsoSessionRegistry.ComputeExpiresAt(authTime, sessionMaxAge) is not long expiresAt)
+                {
+                    _logger.LogWarning(
+                        "KDNX OIDC login missing required auth_time/session_max_age claims for {Username}",
+                        timedState.Username);
+                    return ReturnError(
+                        StatusCodes.Status400BadRequest,
+                        "Identity provider did not return session lifetime claims.");
+                }
+
+                timedState.SessionExpiresAtUnix = expiresAt;
                 timedState.Valid = true;
+                _logger.LogInformation(
+                    "KDNX OIDC session for {Username}: auth_time={AuthTime} session_max_age={MaxAge}s expires_at={Expires}",
+                    timedState.Username,
+                    authTime,
+                    sessionMaxAge,
+                    timedState.SessionExpiresAtUnix);
             }
 
             if (timedState.Valid)
@@ -251,7 +271,23 @@ public class SSOController : ControllerBase
                 {
                     Guid userId = await GetOrCreateUser(timedState.Username, timedState.SubClaim).ConfigureAwait(false);
                     var authenticationResult = await Authenticate(userId, response).ConfigureAwait(false);
-                    return Ok(authenticationResult);
+                    if (!string.IsNullOrEmpty(authenticationResult.AccessToken)
+                        && timedState.SessionExpiresAtUnix > 0)
+                    {
+                        SsoSessionRegistry.Register(
+                            authenticationResult.AccessToken,
+                            timedState.SessionExpiresAtUnix);
+                    }
+
+                    // Fields the callback reads, plus SessionExpiresAt for client-side policy.
+                    return Ok(new
+                    {
+                        authenticationResult.User,
+                        authenticationResult.AccessToken,
+                        authenticationResult.ServerId,
+                        authenticationResult.SessionInfo,
+                        SessionExpiresAt = timedState.SessionExpiresAtUnix
+                    });
                 }
             }
             finally
@@ -313,12 +349,24 @@ public class SSOController : ControllerBase
                 await _userManager.UpdateUserAsync(user).ConfigureAwait(false);
             }
 
+            // Persist or heal sub → user mapping (covers first login and deleted-user remaps).
             if (!string.IsNullOrEmpty(subClaim))
             {
                 pluginConfig.UserMappings ??= new List<UserMapping>();
-                if (pluginConfig.UserMappings.All(m => m.SubClaim != subClaim))
+                var mapping = pluginConfig.UserMappings.FirstOrDefault(m => m.SubClaim == subClaim);
+                if (mapping == null)
                 {
                     pluginConfig.UserMappings.Add(new UserMapping { SubClaim = subClaim, UserId = user.Id });
+                    KdnxOidcPlugin.Instance.SaveConfiguration();
+                }
+                else if (mapping.UserId != user.Id)
+                {
+                    _logger.LogInformation(
+                        "Updating stale user mapping for {SubClaim}: {OldUserId} -> {NewUserId}",
+                        subClaim,
+                        mapping.UserId,
+                        user.Id);
+                    mapping.UserId = user.Id;
                     KdnxOidcPlugin.Instance.SaveConfiguration();
                 }
             }
@@ -343,6 +391,56 @@ public class SSOController : ControllerBase
 
         _logger.LogInformation("Auth request created...");
         return await _sessionManager.AuthenticateDirect(authRequest).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reads required session policy claims from the KDNX identity token.
+    /// </summary>
+    private static bool TryGetSessionClaims(string identityToken, out long authTime, out long sessionMaxAge)
+    {
+        authTime = 0;
+        sessionMaxAge = 0;
+        if (string.IsNullOrEmpty(identityToken))
+        {
+            return false;
+        }
+
+        try
+        {
+            var parts = identityToken.Split('.');
+            if (parts.Length < 2)
+            {
+                return false;
+            }
+
+            var payload = parts[1]
+                .Replace('-', '+')
+                .Replace('_', '/');
+            switch (payload.Length % 4)
+            {
+                case 2: payload += "=="; break;
+                case 3: payload += "="; break;
+            }
+
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("auth_time", out var at) || !at.TryGetInt64(out authTime) || authTime <= 0)
+            {
+                return false;
+            }
+
+            if (!root.TryGetProperty("session_max_age", out var sma) || !sma.TryGetInt64(out sessionMaxAge) || sessionMaxAge <= 0)
+            {
+                return false;
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private ActionResult GetOidcClient(string provider, out OidConfig config, out OidcClient oidcClient)
@@ -513,6 +611,11 @@ public class TimedAuthorizeState
     /// Gets or sets the resolved username.
     /// </summary>
     public string Username { get; set; }
+
+    /// <summary>
+    /// Gets or sets absolute Unix time when the KDNX OIDC session must re-authenticate.
+    /// </summary>
+    public long SessionExpiresAtUnix { get; set; }
 
     /// <summary>
     /// Gets or sets the original subject claim (e.g. Discord ID).

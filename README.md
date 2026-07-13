@@ -24,6 +24,22 @@ Typical KDNX pairing:
 KDNX resource: auth **Passthrough**, OIDC redirect path `/sso/OID/redirect/KDNX`.
 See the companion guide in the KDNX repo: `docs/jellyfin-sso.md`.
 
+### Session max age (re-authentication)
+
+KDNX advertises a global OIDC session policy (default **7 days**) via:
+
+- ID/access token claims: `auth_time`, `session_max_age`
+- Discovery document field: `session_max_age`
+
+This plugin enforces it by:
+
+1. **Requiring** `auth_time` and `session_max_age` on the KDNX identity token (login fails without them)
+2. Computing `SessionExpiresAt = auth_time + session_max_age`
+3. Tracking the Jellyfin access token and calling `ISessionManager.Logout(accessToken)` when expired
+4. Storing `kdnx_session_expires_at` in `localStorage`
+
+Requires a current KDNX server that issues those claims. Change the policy in KDNX admin → Authentication → **OIDC session max age**.
+
 ## Minimal SSO Button
 
 In Jellyfin admin -> `Dashboard -> General -> Branding`:

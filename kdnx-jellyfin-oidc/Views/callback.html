@@ -146,6 +146,12 @@ async function main() {
     // AccessToken in localStorage matches upstream jellyfin-web credential storage.
     localStorage.setItem('jellyfin_credentials', JSON.stringify(jfCreds));
     localStorage.setItem('enableAutoLogin', 'true');
+    // KDNX OIDC absolute session expiry (auth_time + session_max_age), Unix seconds.
+    if (responseJson['SessionExpiresAt']) {
+        localStorage.setItem('kdnx_session_expires_at', String(responseJson['SessionExpiresAt']));
+    } else {
+        localStorage.removeItem('kdnx_session_expires_at');
+    }
     window.location.replace("___jsonPunycodeBaseUrl___" + '/web/index.html');
 }
 
