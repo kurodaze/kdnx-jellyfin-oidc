@@ -19,7 +19,8 @@ Typical KDNX pairing:
 - **Provider name**: `KDNX` (callback path becomes `/sso/OID/redirect/KDNX`)
 - **OpenID Endpoint**: `https://kdnx-auth.yourdomain.tld`
 - **Client ID**: `fin.yourdomain.tld` (public resource hostname only — also used as OIDC `redirect_uri` host)
-- **Additional scopes**: leave empty (`openid` + `profile` are always requested)
+
+Scopes are fixed to `openid profile` (what KDNX issues).
 
 KDNX resource: auth **Passthrough**, OIDC redirect path `/sso/OID/redirect/KDNX`.
 See the companion guide in the KDNX repo: `docs/jellyfin-sso.md`.
@@ -35,10 +36,10 @@ This plugin enforces it by:
 
 1. **Requiring** `auth_time` and `session_max_age` on the KDNX identity token (login fails without them)
 2. Computing `SessionExpiresAt = auth_time + session_max_age`
-3. Tracking the Jellyfin access token and calling `ISessionManager.Logout(accessToken)` when expired
+3. Tracking the Jellyfin access token in process memory and calling `ISessionManager.Logout(accessToken)` when expired
 4. Storing `kdnx_session_expires_at` in `localStorage`
 
-Requires a current KDNX server that issues those claims. Change the policy in KDNX admin → Authentication → **OIDC session max age**.
+Tracking is in-memory: a Jellyfin restart clears the registry, so already-issued sessions then follow normal Jellyfin lifetime until the next SSO login. Requires a current KDNX server that issues those claims. Change the policy in KDNX admin → Authentication → **OIDC session max age**.
 
 ## Minimal SSO Button
 

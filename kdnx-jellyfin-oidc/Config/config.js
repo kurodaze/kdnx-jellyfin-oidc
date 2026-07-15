@@ -9,9 +9,6 @@ const ssoConfigurationPage = {
         page.querySelector("#OidEndpoint").value = provider.OidEndpoint || "";
         page.querySelector("#OidClientId").value = provider.OidClientId || "";
         page.querySelector("#Enabled").checked = !!provider.Enabled;
-        
-        // Scopes textarea - join with newline
-        page.querySelector("#OidScopes").value = Array.isArray(provider.OidScopes) ? provider.OidScopes.join("\n") : (provider.OidScopes || "");
       },
     );
   },
@@ -21,20 +18,14 @@ const ssoConfigurationPage = {
       Dashboard.alert("Please specify a provider name.");
       return;
     }
-    
-    ApiClient.getPluginConfiguration(ssoConfigurationPage.pluginUniqueId).then((config) => {
-      let current_config = { ProviderName: provider_name };
-      
-      current_config.OidEndpoint = page.querySelector("#OidEndpoint").value || null;
-      current_config.OidClientId = page.querySelector("#OidClientId").value || null;
-      current_config.Enabled = page.querySelector("#Enabled").checked;
-      
-      // One scope per line; trim and drop empties (openid/profile are always requested server-side)
-      current_config.OidScopes = page.querySelector("#OidScopes").value
-        ? page.querySelector("#OidScopes").value.split("\n").map(s => s.trim()).filter(Boolean)
-        : [];
 
-      config.OidConfigs = [current_config]; // Always overwrite with the single provider
+    ApiClient.getPluginConfiguration(ssoConfigurationPage.pluginUniqueId).then((config) => {
+      config.OidConfigs = [{
+        ProviderName: provider_name,
+        OidEndpoint: page.querySelector("#OidEndpoint").value || null,
+        OidClientId: page.querySelector("#OidClientId").value || null,
+        Enabled: page.querySelector("#Enabled").checked,
+      }];
 
       ApiClient.updatePluginConfiguration(
         ssoConfigurationPage.pluginUniqueId,
@@ -46,7 +37,7 @@ const ssoConfigurationPage = {
       });
     });
   },
-  addTextAreaStyle: (view) => {
+  addStyle: (view) => {
     const style = document.createElement("link");
     style.rel = "stylesheet";
     style.href =
@@ -56,7 +47,7 @@ const ssoConfigurationPage = {
 };
 
 export default function (view) {
-  ssoConfigurationPage.addTextAreaStyle(view);
+  ssoConfigurationPage.addStyle(view);
   ssoConfigurationPage.loadConfiguration(view);
 
   view.querySelector("#SaveProvider").addEventListener("click", (e) => {

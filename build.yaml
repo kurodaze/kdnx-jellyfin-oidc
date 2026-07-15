@@ -1,7 +1,7 @@
 name: "KDNX OIDC"
 guid: "241e75a6-d3d4-4345-8bae-a53c8a2034c1"
 imageUrl: ""
-version: "1.0.5.0"
+version: "1.0.6.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "KuroDaze"
@@ -14,6 +14,7 @@ artifacts:
   - "Duende.IdentityModel.OidcClient.dll"
   - "Duende.IdentityModel.dll"
 changelog: |
+  1.0.6.0: Drop unused additional scopes config (always openid profile); comment/docs polish; CI without empty test step
   1.0.5.0: Enforce KDNX OIDC session max age (auth_time + session_max_age); logout expired SSO sessions; require session claims from IdP; heal stale sub→user mappings
   1.0.4.0: Seed device id from NativeShell on SSO callback (Android hang fix); redirect_uri from Client ID; require https authority; scope trim; EdDSA in allowed algs; remove dead admin path
   1.0.3.0: Fix scope deduplication, remove dead code, Fix iframe visibility under CSP (attempt #2)

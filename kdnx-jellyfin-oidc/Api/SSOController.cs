@@ -304,7 +304,7 @@ public class SSOController : ControllerBase
         var pluginConfig = KdnxOidcPlugin.Instance.Configuration;
         User user = null;
 
-        // Identity is the OIDC `sub` (Discord user id), never username alone.
+        // Identity is the OIDC `sub`, never username alone.
         if (!string.IsNullOrEmpty(subClaim) && pluginConfig.UserMappings != null)
         {
             var mapping = pluginConfig.UserMappings.FirstOrDefault(m => m.SubClaim == subClaim);
@@ -335,7 +335,7 @@ public class SSOController : ControllerBase
                     newName = $"{canonicalName}{counter}";
                 }
 
-                _logger.LogInformation("Username {OriginalName} is already taken. Generated new username {NewName} for Discord ID {SubClaim}", canonicalName, newName, subClaim);
+                _logger.LogInformation("Username {OriginalName} is already taken. Generated new username {NewName} for sub {SubClaim}", canonicalName, newName, subClaim);
                 canonicalName = newName;
                 user = null;
             }
@@ -516,17 +516,13 @@ public class SSOController : ControllerBase
 
     private OidcClient CreateOidcClient(OidConfig config, Uri oidEndpointUri, string provider, string dummyOrigin)
     {
-        // openid + profile always; extras from config (KDNX supports openid/profile).
-        var extraScopes = (config.OidScopes ?? Array.Empty<string>())
-            .Select(s => s?.Trim())
-            .Where(s => !string.IsNullOrEmpty(s));
-
+        // KDNX issues openid + profile only.
         var options = new OidcClientOptions
         {
             Authority = config.OidEndpoint?.Trim(),
             ClientId = config.OidClientId?.Trim(),
             RedirectUri = dummyOrigin + $"/sso/OID/redirect/{provider}",
-            Scope = string.Join(" ", new[] { "openid", "profile" }.Concat(extraScopes!).Distinct(StringComparer.Ordinal)),
+            Scope = "openid profile",
             DisablePushedAuthorization = false,
             LoggerFactory = _loggerFactory,
             // UserInfo over TLS to KDNX after PKCE code exchange; sub must match ID token claims.
@@ -618,7 +614,7 @@ public class TimedAuthorizeState
     public long SessionExpiresAtUnix { get; set; }
 
     /// <summary>
-    /// Gets or sets the original subject claim (e.g. Discord ID).
+    /// Gets or sets the original OIDC subject claim.
     /// </summary>
     public string SubClaim { get; set; }
 }

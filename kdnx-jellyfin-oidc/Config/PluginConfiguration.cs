@@ -23,7 +23,7 @@ public class PluginConfiguration : BasePluginConfiguration
     public List<OidConfig> OidConfigs { get; set; }
 
     /// <summary>
-    /// Gets or sets the mappings of Discord IDs (sub claims) to Jellyfin User IDs.
+    /// Gets or sets the mappings of OIDC sub claims to Jellyfin User IDs.
     /// </summary>
     public List<UserMapping> UserMappings { get; set; }
 }
@@ -52,11 +52,6 @@ public class OidConfig
     /// Gets or sets a value indicating whether the provider is enabled.
     /// </summary>
     public bool Enabled { get; set; }
-
-    /// <summary>
-    /// Gets or Sets additional Scopes to request access to in the authorization request.
-    /// </summary>
-    public string[] OidScopes { get; set; }
 }
 
 /// <summary>
@@ -65,7 +60,7 @@ public class OidConfig
 public class UserMapping
 {
     /// <summary>
-    /// Gets or sets the subject claim from the OIDC provider (e.g. Discord ID).
+    /// Gets or sets the subject claim from the OIDC provider.
     /// </summary>
     public string SubClaim { get; set; }
 

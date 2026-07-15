@@ -33,7 +33,6 @@
                   id="OidProviderName"
                   required=""
                   type="text"
-                  class="sso-text"
                 />
                 <div class="fieldDescription">
                   The name used by Jellyfin to identify the OpenID provider.
@@ -46,7 +45,6 @@
                   id="OidEndpoint"
                   required=""
                   type="text"
-                  class="sso-text"
                 />
                 <div class="fieldDescription">
                   The OpenID endpoint. Must have a .well-known path available.
@@ -54,38 +52,17 @@
               </div>
             </div>
 
-            <!-- Row 2: Client Credentials -->
-            <div class="sso-grid-2">
-              <div class="inputContainer">
-                <label class="inputLabel inputLabelUnfocused" for="OidClientId">OpenID Client ID:</label>
-                <input
-                  is="emby-input"
-                  id="OidClientId"
-                  required=""
-                  type="text"
-                  class="sso-text"
-                />
-                <div class="fieldDescription">
-                  Public resource hostname as registered with KDNX (e.g. fin.example.com). Used as OIDC client_id and redirect_uri host.
-                </div>
-              </div>
-
-            </div>
-
-            <!-- Row 3: Scopes & Default Username Claims -->
-            <div class="sso-grid-2">
-              <div class="inputContainer">
-                <label class="inputLabel inputLabelUnfocused" for="OidScopes">Request Additional Scopes:</label>
-                <textarea
-                  is="emby-textarea"
-                  id="OidScopes"
-                  required=""
-                  type="text"
-                  class="sso-line-list emby-textarea"
-                ></textarea>
-                <div class="fieldDescription">
-                  Extra scopes beyond openid and profile (always requested). One per line. KDNX supports openid and profile only.
-                </div>
+            <!-- Row 2: Client ID -->
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="OidClientId">OpenID Client ID:</label>
+              <input
+                is="emby-input"
+                id="OidClientId"
+                required=""
+                type="text"
+              />
+              <div class="fieldDescription">
+                Public resource hostname as registered with KDNX (e.g. fin.example.com). Used as OIDC client_id and redirect_uri host.
               </div>
             </div>
 
@@ -97,7 +74,6 @@
                   id="Enabled"
                   name="Enabled"
                   type="checkbox"
-                  class="sso-toggle"
                 />
                 <span>Enable this OIDC Provider</span>
               </label>
