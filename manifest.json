@@ -1,0 +1,69 @@
+[
+    {
+        "guid": "241e75a6-d3d4-4345-8bae-a53c8a2034c1",
+        "name": "KDNX OIDC",
+        "description": "Jellyfin OpenID Connect (OIDC) relying party plugin.\n",
+        "overview": "Authenticate users against an OIDC provider.",
+        "owner": "KuroDaze",
+        "category": "Authentication",
+        "imageUrl": "",
+        "versions": [
+            {
+                "version": "1.0.7.0",
+                "changelog": "**Full Changelog**: https://github.com/kurodaze/kdnx-jellyfin-oidc/compare/v1.0.6.0...v1.0.7.0",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/kurodaze/kdnx-jellyfin-oidc/releases/download/v1.0.7.0/kdnx-oidc_1.0.7.0.zip",
+                "checksum": "b84205e4bd56f3ed2b8d325d92b37cad",
+                "timestamp": "2026-07-16T11:56:19Z"
+            },
+            {
+                "version": "1.0.6.0",
+                "changelog": "**Full Changelog**: https://github.com/kurodaze/kdnx-jellyfin-oidc/compare/v1.0.5.0...v1.0.6.0",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/kurodaze/kdnx-jellyfin-oidc/releases/download/v1.0.6.0/kdnx-oidc_1.0.6.0.zip",
+                "checksum": "f00379de2142b68c0804c583b3c3481c",
+                "timestamp": "2026-07-15T17:08:13Z"
+            },
+            {
+                "version": "1.0.5.0",
+                "changelog": "**Full Changelog**: https://github.com/kurodaze/kdnx-jellyfin-oidc/compare/v1.0.4.0...v1.0.5.0",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/kurodaze/kdnx-jellyfin-oidc/releases/download/v1.0.5.0/kdnx-oidc_1.0.5.0.zip",
+                "checksum": "32cc8a4e894d22f0338445c1c64d44fc",
+                "timestamp": "2026-07-13T18:33:17Z"
+            },
+            {
+                "version": "1.0.4.0",
+                "changelog": "**Full Changelog**: https://github.com/kurodaze/kdnx-jellyfin-oidc/compare/v1.0.3.0...v1.0.4.0",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/kurodaze/kdnx-jellyfin-oidc/releases/download/v1.0.4.0/kdnx-oidc_1.0.4.0.zip",
+                "checksum": "b23cf51e8aeea328bae7171af79203fe",
+                "timestamp": "2026-07-13T18:17:39Z"
+            },
+            {
+                "version": "1.0.3.0",
+                "changelog": "**Full Changelog**: https://github.com/kurodaze/kdnx-jellyfin-oidc/compare/1.0.2.0...v1.0.3.0",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/kurodaze/kdnx-jellyfin-oidc/releases/download/v1.0.3.0/kdnx-oidc_1.0.3.0.zip",
+                "checksum": "cef746be966b83016c9a37e841413c73",
+                "timestamp": "2026-06-03T14:48:00Z"
+            },
+            {
+                "version": "1.0.2.0",
+                "changelog": "**Full Changelog**: https://github.com/kurodaze/kdnx-jellyfin-oidc/compare/v1.0.0.0...1.0.2.0",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/kurodaze/kdnx-jellyfin-oidc/releases/download/1.0.2.0/kdnx-oidc_1.0.2.0.zip",
+                "checksum": "ce0c4bc8aa8b09326c4004aeda8eb9dc",
+                "timestamp": "2026-06-02T18:31:08Z"
+            },
+            {
+                "version": "1.0.0.0",
+                "changelog": "",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/kurodaze/kdnx-jellyfin-oidc/releases/download/v1.0.0.0/kdnx-oidc_1.0.0.0.zip",
+                "checksum": "e9fb28611ac8b19e352344c1ca5ce2a0",
+                "timestamp": "2026-06-02T17:50:17Z"
+            }
+        ]
+    }
+]
