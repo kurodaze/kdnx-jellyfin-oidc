@@ -93,7 +93,8 @@ public class SSOController : ControllerBase
             return BadRequest("CSRF check failed. Please ensure cookies are enabled and try again.");
         }
 
-        Response.Cookies.Delete(cookieName, new CookieOptions { Path = "/" });
+        // __Host- cookies require Secure + Path=/ on set and delete (MDN cookie prefixes).
+        Response.Cookies.Delete(cookieName, new CookieOptions { Path = "/", Secure = true });
 
         if (!_memoryCache.TryGetValue(state, out TimedAuthorizeState timedState))
         {
@@ -229,16 +230,6 @@ public class SSOController : ControllerBase
     {
         if (string.IsNullOrEmpty(input)) return input;
         return input.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "");
-    }
-
-    /// <summary>
-    /// Gets the names of all registered OpenID providers.
-    /// </summary>
-    /// <returns>An <see cref="ActionResult"/> containing the provider names.</returns>
-    [HttpGet("OID/GetNames")]
-    public ActionResult OidProviderNames()
-    {
-        return Ok(KdnxOidcPlugin.Instance.Configuration.OidConfigs.Select(x => x.ProviderName));
     }
 
     /// <summary>
