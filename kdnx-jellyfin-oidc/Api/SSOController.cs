@@ -34,7 +34,7 @@ public class SSOController : ControllerBase
     private readonly ILoggerFactory _loggerFactory;
     private readonly ICryptoProvider _cryptoProvider;
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IMemoryCache _memoryCache;
+    private readonly SsoFlowCache _memoryCache;
     private static readonly string _assemblyVersion = typeof(SSOController).Assembly.GetName().Version?.ToString() ?? "0.0.0.0";
 
     /// <summary>
@@ -46,7 +46,7 @@ public class SSOController : ControllerBase
     /// <param name="userManager">The user manager.</param>
     /// <param name="cryptoProvider">The crypto provider.</param>
     /// <param name="httpClientFactory">The HTTP client factory.</param>
-    /// <param name="memoryCache">The memory cache.</param>
+    /// <param name="memoryCache">The plugin-private, size-capped SSO flow cache.</param>
     public SSOController(
         ILogger<SSOController> logger,
         ILoggerFactory loggerFactory,
@@ -54,7 +54,7 @@ public class SSOController : ControllerBase
         IUserManager userManager,
         ICryptoProvider cryptoProvider,
         IHttpClientFactory httpClientFactory,
-        IMemoryCache memoryCache)
+        SsoFlowCache memoryCache)
     {
         _sessionManager = sessionManager;
         _userManager = userManager;
@@ -147,7 +147,7 @@ public class SSOController : ControllerBase
             if (timedState.Valid)
             {
                 string newToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-                var cacheOptions = new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromMinutes(10));
+                var cacheOptions = new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromMinutes(10)).SetSize(1);
                 _memoryCache.Set($"oidcauth_{newToken}", timedState, cacheOptions);
 
                 string nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(16));
@@ -202,7 +202,8 @@ public class SSOController : ControllerBase
         });
 
         var cacheOptions = new MemoryCacheEntryOptions()
-            .SetAbsoluteExpiration(TimeSpan.FromMinutes(10));
+            .SetAbsoluteExpiration(TimeSpan.FromMinutes(10))
+            .SetSize(1);
         _memoryCache.Set($"oidcstate_{state.State}", new TimedAuthorizeState(state), cacheOptions);
 
         if (!Uri.TryCreate(state.StartUrl, UriKind.Absolute, out Uri startUri) ||
@@ -446,6 +447,7 @@ public class SSOController : ControllerBase
         oidcClient = _memoryCache.GetOrCreate(cacheKey, entry =>
         {
             entry.SetSlidingExpiration(TimeSpan.FromMinutes(15));
+            entry.SetSize(1);
             return CreateOidcClient(capturedConfig, oidEndpointUri, redirectUri);
         });
 
