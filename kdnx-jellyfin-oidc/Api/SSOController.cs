@@ -451,7 +451,7 @@ public class SSOController : ControllerBase
         {
             entry.SetSlidingExpiration(TimeSpan.FromMinutes(15));
             entry.SetSize(1);
-            return CreateOidcClient(capturedConfig, oidEndpointUri, redirectUri);
+            return CreateOidcClient(capturedConfig, redirectUri);
         });
 
         return null;
@@ -501,7 +501,7 @@ public class SSOController : ControllerBase
         };
     }
 
-    private OidcClient CreateOidcClient(OidConfig config, Uri oidEndpointUri, string redirectUri)
+    private OidcClient CreateOidcClient(OidConfig config, string redirectUri)
     {
         // KDNX issues openid + profile only.
         var options = new OidcClientOptions
@@ -526,7 +526,8 @@ public class SSOController : ControllerBase
         // is false (channel trust: TLS + PKCE + UserInfo). Default alg list omits EdDSA; add it
         // so a future signature validator can accept KDNX tokens without another code change.
         options.Policy.ValidSignatureAlgorithms.Add("EdDSA");
-        options.Policy.Discovery.AdditionalEndpointBaseAddresses.Add(oidEndpointUri.GetLeftPart(UriPartial.Authority));
+
+        // Already Duende defaults; pinned so a library change can't relax them.
         options.Policy.Discovery.ValidateEndpoints = true;
         options.Policy.Discovery.RequireHttps = true;
         options.Policy.Discovery.ValidateIssuerName = true;
