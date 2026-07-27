@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Plain console assertions, no test framework. See tests/README.md to run.
+    Exits non-zero if any check fails.
+
+    Deliberately not added to the solution that build.yaml/JPRM packages, so it
+    can never end up in the plugin zip.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>Kdnx.Jellyfin.Oidc.Tests</RootNamespace>
+    <AssemblyName>kdnx-jellyfin-oidc-tests</AssemblyName>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\kdnx-jellyfin-oidc\kdnx-jellyfin-oidc.csproj" />
+  </ItemGroup>
+
+</Project>
