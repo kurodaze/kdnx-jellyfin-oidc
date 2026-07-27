@@ -82,7 +82,8 @@ def main():
         if not isinstance(tag_build_info, dict):
             tag_build_info = base_build_info
             
-        version_str = tag_build_info.get('version', tag_name.lstrip('v'))
+        # removeprefix, not lstrip: lstrip strips characters, so "version-1" -> "ersion-1".
+        version_str = tag_build_info.get('version', (tag_name or '').removeprefix('v'))
         target_abi = tag_build_info.get('targetAbi', '10.11.0.0')
 
         assets = release.get('assets', [])
@@ -114,7 +115,7 @@ def main():
             "timestamp": release.get('published_at')
         })
 
-    manifest_entry["versions"].sort(key=lambda x: x['timestamp'], reverse=True)
+    manifest_entry["versions"].sort(key=lambda x: x['timestamp'] or '', reverse=True)
 
     manifest = [manifest_entry]
 
