@@ -96,7 +96,8 @@ public class SSOController : ControllerBase
         // __Host- cookies require Secure + Path=/ on set and delete (MDN cookie prefixes).
         Response.Cookies.Delete(cookieName, new CookieOptions { Path = "/", Secure = true });
 
-        if (!_memoryCache.TryGetValue(state, out TimedAuthorizeState timedState))
+        // Prefixed: `state` is caller-supplied and must not address another entry.
+        if (!_memoryCache.TryGetValue($"oidcstate_{state}", out TimedAuthorizeState timedState))
         {
             return BadRequest("Invalid or expired state");
         }
@@ -147,7 +148,7 @@ public class SSOController : ControllerBase
             {
                 string newToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
                 var cacheOptions = new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromMinutes(10));
-                _memoryCache.Set(newToken, timedState, cacheOptions);
+                _memoryCache.Set($"oidcauth_{newToken}", timedState, cacheOptions);
 
                 string nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(16));
                 Response.Headers.Append("Content-Security-Policy", $"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; frame-src 'self'; connect-src 'self'; base-uri 'none';");
@@ -164,7 +165,7 @@ public class SSOController : ControllerBase
         }
         finally
         {
-            _memoryCache.Remove(state);
+            _memoryCache.Remove($"oidcstate_{state}");
         }
     }
 
@@ -202,7 +203,7 @@ public class SSOController : ControllerBase
 
         var cacheOptions = new MemoryCacheEntryOptions()
             .SetAbsoluteExpiration(TimeSpan.FromMinutes(10));
-        _memoryCache.Set(state.State, new TimedAuthorizeState(state), cacheOptions);
+        _memoryCache.Set($"oidcstate_{state.State}", new TimedAuthorizeState(state), cacheOptions);
 
         if (!Uri.TryCreate(state.StartUrl, UriKind.Absolute, out Uri startUri) ||
             !Uri.TryCreate(config.OidEndpoint, UriKind.Absolute, out Uri authorityUri) ||
@@ -243,7 +244,7 @@ public class SSOController : ControllerBase
             return BadRequest("Missing authentication data");
         }
 
-        if (_memoryCache.TryGetValue(response.Data, out TimedAuthorizeState timedState))
+        if (_memoryCache.TryGetValue($"oidcauth_{response.Data}", out TimedAuthorizeState timedState))
         {
             try
             {
@@ -272,7 +273,7 @@ public class SSOController : ControllerBase
             }
             finally
             {
-                _memoryCache.Remove(response.Data);
+                _memoryCache.Remove($"oidcauth_{response.Data}");
             }
         }
 
@@ -438,7 +439,9 @@ public class SSOController : ControllerBase
             return ReturnError(StatusCodes.Status500InternalServerError, redirectError);
         }
 
-        var cacheKey = $"oidcclient_{provider}";
+        // Keyed on the configured name, not the route: provider matching is
+        // case-insensitive, so the route casing would yield one entry per variant.
+        var cacheKey = $"oidcclient_{config.ProviderName}";
         var capturedConfig = config;
         oidcClient = _memoryCache.GetOrCreate(cacheKey, entry =>
         {
