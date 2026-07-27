@@ -1,7 +1,7 @@
 name: "KDNX OIDC"
 guid: "241e75a6-d3d4-4345-8bae-a53c8a2034c1"
 imageUrl: ""
-version: "1.0.7.0"
+version: "1.0.8.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "KuroDaze"
@@ -14,6 +14,7 @@ artifacts:
   - "Duende.IdentityModel.OidcClient.dll"
   - "Duende.IdentityModel.dll"
 changelog: |
+  1.0.8.0: Build redirect_uri from config and normalise its casing to match KDNX validation; scope and size-cap the SSO login cache; no-store on the callback response; sanitise IdP values in logs; preserve other servers' credentials on login; remove upstream fork leftovers
   1.0.7.0: Clear __Host-OidcState with Secure on delete; remove unused OID/GetNames endpoint
   1.0.6.0: Drop unused additional scopes config (always openid profile); comment/docs polish; CI without empty test step
   1.0.5.0: Enforce KDNX OIDC session max age (auth_time + session_max_age); logout expired SSO sessions; require session claims from IdP; heal stale sub→user mappings
