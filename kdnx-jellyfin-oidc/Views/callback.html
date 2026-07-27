@@ -81,6 +81,8 @@ async function main() {
     // Prefer the native app device id before jellyfin-web can invent a web id.
     seedDeviceIdFromNativeShell();
 
+    // The wipe forces jellyfin-web to re-bootstrap; keep other servers from going with it.
+    const savedCredentials = localStorage.getItem('jellyfin_credentials');
     localStorage.removeItem('jellyfin_credentials');
     document.getElementById('iframe-main').src = "___jsonPunycodeBaseUrl___" + '/web/index.html';
 
@@ -141,8 +143,19 @@ async function main() {
     responseJson['User']['EnableAutoLogin'] = true;
     localStorage.setItem(userId, JSON.stringify(responseJson['User']));
     const jfCreds = JSON.parse(localStorage.getItem('jellyfin_credentials'));
-    jfCreds['Servers'][0]['AccessToken'] = responseJson['AccessToken'];
-    jfCreds['Servers'][0]['UserId'] = responseJson['User']['Id'];
+
+    // Restore the other servers, then target this one by Id, not index.
+    if (savedCredentials) {
+        try {
+            for (const server of (JSON.parse(savedCredentials).Servers || [])) {
+                if (!jfCreds.Servers.some(s => s.Id === server.Id)) jfCreds.Servers.push(server);
+            }
+        } catch (e) { /* ignore a malformed previous blob */ }
+    }
+    const serverId = responseJson['User']['ServerId'];
+    const target = jfCreds['Servers'].find(s => s.Id === serverId) || jfCreds['Servers'][0];
+    target['AccessToken'] = responseJson['AccessToken'];
+    target['UserId'] = responseJson['User']['Id'];
     // AccessToken in localStorage matches upstream jellyfin-web credential storage.
     localStorage.setItem('jellyfin_credentials', JSON.stringify(jfCreds));
     localStorage.setItem('enableAutoLogin', 'true');
