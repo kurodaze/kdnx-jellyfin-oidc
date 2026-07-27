@@ -25,28 +25,23 @@ public static class WebResponse
         return reader.ReadToEnd();
     });
 
-    private static string GetHtmlTemplate() => _baseHtml.Value;
-
     /// <summary>
     /// A generator for the web response that incorporates the data from the server.
     /// </summary>
     /// <param name="data">The data of the auth flow (the state ID for OpenID).</param>
     /// <param name="provider">The name of the provider to callback to.</param>
     /// <param name="pathBase">The path base URL of the Jellyfin installation.</param>
-    /// <param name="mode">The mode of the function; e.g. OID.</param>
     /// <param name="nonce">The nonce string to include in the OIDC state.</param>
     /// <returns>A string with the HTML to serve to the client.</returns>
-    public static string Generator(string data, string provider, string pathBase, string mode, string nonce)
+    public static string Generator(string data, string provider, string pathBase, string nonce)
     {
         pathBase = pathBase.TrimEnd('/');
 
         string jsonPathBase = System.Text.Json.JsonSerializer.Serialize(pathBase);
-        string jsonAuthUrl = System.Text.Json.JsonSerializer.Serialize($"{pathBase}/sso/{mode}/Auth/{provider}");
+        string jsonAuthUrl = System.Text.Json.JsonSerializer.Serialize($"{pathBase}/sso/OID/Auth/{provider}");
         string jsonData = System.Text.Json.JsonSerializer.Serialize(data);
 
-        var template = GetHtmlTemplate();
-
-        return template
+        return _baseHtml.Value
             .Replace("\"___jsonPunycodeBaseUrl___\"", jsonPathBase)
             .Replace("\"___jsonData___\"", jsonData)
             .Replace("\"___jsonAuthUrl___\"", jsonAuthUrl)

@@ -158,7 +158,7 @@ public class SSOController : ControllerBase
                 // Body carries a single-use credential (RFC 6749 5.1).
                 Response.Headers.CacheControl = "no-store";
 
-                return Content(WebResponse.Generator(data: newToken, provider: provider, pathBase: Request.PathBase.ToString(), mode: "OID", nonce: nonce), MediaTypeNames.Text.Html);
+                return Content(WebResponse.Generator(data: newToken, provider: provider, pathBase: Request.PathBase.ToString(), nonce: nonce), MediaTypeNames.Text.Html);
             }
             else
             {

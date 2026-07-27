@@ -76,7 +76,6 @@ public sealed class SsoSessionWatchdog : IHostedService, IDisposable
             {
                 try
                 {
-                    // Jellyfin 10.11: Logout takes the access token string, not SessionInfo.
                     await _sessionManager.Logout(accessToken).ConfigureAwait(false);
                     revoked++;
                 }
