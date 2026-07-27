@@ -281,7 +281,7 @@ public class SSOController : ControllerBase
             }
         }
 
-        return Problem("Something went wrong");
+        return BadRequest("Invalid or expired authentication data");
     }
 
     private async Task<Guid> GetOrCreateUser(string canonicalName, string subClaim)
