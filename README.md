@@ -22,8 +22,13 @@ Typical KDNX pairing:
 
 Scopes are fixed to `openid profile` (what KDNX issues).
 
-KDNX resource: auth **Passthrough**, OIDC redirect path `/sso/OID/redirect/KDNX`.
+KDNX resource: auth **Passthrough**, OIDC redirect path `/sso/OID/redirect/KDNX`
+(KDNX defaults to `/callback`, so this has to be changed).
 See the companion guide in the KDNX repo: `docs/jellyfin-sso.md`.
+
+The provider name and the redirect path are compared exactly, case included, so
+whatever you pick must be identical on both ends — provider name `KDNX` pairs with
+`/sso/OID/redirect/KDNX`, while `kdnx` would need `/sso/OID/redirect/kdnx`.
 
 ### Session max age (re-authentication)
 
