@@ -155,6 +155,9 @@ public class SSOController : ControllerBase
                 Response.Headers.Append("X-Content-Type-Options", "nosniff");
                 Response.Headers.Append("X-Frame-Options", "SAMEORIGIN");
 
+                // Body carries a single-use credential (RFC 6749 5.1).
+                Response.Headers.CacheControl = "no-store";
+
                 return Content(WebResponse.Generator(data: newToken, provider: provider, pathBase: Request.PathBase.ToString(), mode: "OID", nonce: nonce), MediaTypeNames.Text.Html);
             }
             else
