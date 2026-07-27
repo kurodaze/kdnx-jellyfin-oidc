@@ -128,7 +128,7 @@ public class SSOController : ControllerBase
                 {
                     _logger.LogWarning(
                         "KDNX OIDC login missing required auth_time/session_max_age claims for {Username}",
-                        timedState.Username);
+                        SanitizeLogInput(timedState.Username));
                     return ReturnError(
                         StatusCodes.Status400BadRequest,
                         "Identity provider did not return session lifetime claims.");
@@ -138,7 +138,7 @@ public class SSOController : ControllerBase
                 timedState.Valid = true;
                 _logger.LogInformation(
                     "KDNX OIDC session for {Username}: auth_time={AuthTime} session_max_age={MaxAge}s expires_at={Expires}",
-                    timedState.Username,
+                    SanitizeLogInput(timedState.Username),
                     authTime,
                     sessionMaxAge,
                     timedState.SessionExpiresAtUnix);
@@ -162,7 +162,7 @@ public class SSOController : ControllerBase
             }
             else
             {
-                _logger.LogWarning("OpenID user {Username} missing username claim.", timedState.Username);
+                _logger.LogWarning("OpenID login for provider {Provider} is missing a username claim.", SanitizeLogInput(provider));
                 return ReturnError(StatusCodes.Status401Unauthorized, "Error. Missing username claim.");
             }
         }
@@ -223,7 +223,7 @@ public class SSOController : ControllerBase
     private string SanitizeLogInput(string input)
     {
         if (string.IsNullOrEmpty(input)) return input;
-        return input.Replace(Environment.NewLine, "").Replace("\n", "").Replace("\r", "");
+        return input.Replace("\n", "").Replace("\r", "");
     }
 
     /// <summary>
@@ -298,7 +298,7 @@ public class SSOController : ControllerBase
                 user = _userManager.GetUserById(mapping.UserId);
                 if (user != null && user.Username != canonicalName && _userManager.GetUserByName(canonicalName) == null)
                 {
-                    _logger.LogInformation("Updating username for {SubClaim} from {OldName} to {NewName}", subClaim, user.Username, canonicalName);
+                    _logger.LogInformation("Updating username for {SubClaim} from {OldName} to {NewName}", SanitizeLogInput(subClaim), SanitizeLogInput(user.Username), SanitizeLogInput(canonicalName));
                     user.Username = canonicalName;
                     await _userManager.UpdateUserAsync(user).ConfigureAwait(false);
                 }
@@ -320,14 +320,14 @@ public class SSOController : ControllerBase
                     newName = $"{canonicalName}{counter}";
                 }
 
-                _logger.LogInformation("Username {OriginalName} is already taken. Generated new username {NewName} for sub {SubClaim}", canonicalName, newName, subClaim);
+                _logger.LogInformation("Username {OriginalName} is already taken. Generated new username {NewName} for sub {SubClaim}", SanitizeLogInput(canonicalName), SanitizeLogInput(newName), SanitizeLogInput(subClaim));
                 canonicalName = newName;
                 user = null;
             }
 
             if (user == null)
             {
-                _logger.LogInformation("OIDC user {CanonicalName} doesn't exist, creating...", canonicalName);
+                _logger.LogInformation("OIDC user {CanonicalName} doesn't exist, creating...", SanitizeLogInput(canonicalName));
                 user = await _userManager.CreateUserAsync(canonicalName).ConfigureAwait(false);
                 user.AuthenticationProviderId = GetType().FullName;
                 user.Password = _cryptoProvider.CreatePasswordHash(Convert.ToBase64String(RandomNumberGenerator.GetBytes(64))).ToString();
@@ -348,7 +348,7 @@ public class SSOController : ControllerBase
                 {
                     _logger.LogInformation(
                         "Updating stale user mapping for {SubClaim}: {OldUserId} -> {NewUserId}",
-                        subClaim,
+                        SanitizeLogInput(subClaim),
                         mapping.UserId,
                         user.Id);
                     mapping.UserId = user.Id;
