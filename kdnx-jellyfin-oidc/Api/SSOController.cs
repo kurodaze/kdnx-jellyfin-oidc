@@ -404,16 +404,7 @@ public class SSOController : ControllerBase
                 return false;
             }
 
-            var payload = parts[1]
-                .Replace('-', '+')
-                .Replace('_', '/');
-            switch (payload.Length % 4)
-            {
-                case 2: payload += "=="; break;
-                case 3: payload += "="; break;
-            }
-
-            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            var json = System.Text.Encoding.UTF8.GetString(System.Buffers.Text.Base64Url.DecodeFromChars(parts[1]));
             using var doc = System.Text.Json.JsonDocument.Parse(json);
             var root = doc.RootElement;
             if (!root.TryGetProperty("auth_time", out var at) || !at.TryGetInt64(out authTime) || authTime <= 0)
