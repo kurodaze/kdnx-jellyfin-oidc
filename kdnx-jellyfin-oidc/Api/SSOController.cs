@@ -220,11 +220,10 @@ public class SSOController : ControllerBase
         return Redirect(state.StartUrl);
     }
 
-    private string SanitizeLogInput(string input)
-    {
-        if (string.IsNullOrEmpty(input)) return input;
-        return input.Replace("\n", "").Replace("\r", "");
-    }
+    // Single sanitized return path, so callers cannot receive the value unchanged.
+    // ReplaceLineEndings covers CR, LF, CRLF, FF, NEL and the Unicode line and
+    // paragraph separators. Vertical tab is not a newline and is left alone.
+    private static string SanitizeLogInput(string input) => input?.ReplaceLineEndings(string.Empty);
 
     /// <summary>
     /// Authenticates a user with a provider callback.

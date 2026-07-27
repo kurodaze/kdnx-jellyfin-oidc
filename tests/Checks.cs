@@ -161,6 +161,32 @@ static class Program
         }
 
         Console.WriteLine();
+        Console.WriteLine("== SanitizeLogInput: no line break survives, on any return path ==");
+        {
+            var m = Ctl.GetMethod("SanitizeLogInput", BindingFlags.NonPublic | BindingFlags.Static);
+            string San(string s) => (string)m.Invoke(null, new object[] { s });
+
+            foreach (var (raw, label) in new[]
+            {
+                ("kuro\nADMIN logged in", "LF"),
+                ("kuro\rADMIN logged in", "CR"),
+                ("kuro\r\nADMIN logged in", "CRLF"),
+                ("kuro\u0085ADMIN logged in", "NEL"),
+                ("kuro\u2028ADMIN logged in", "line separator"),
+                ("kuro\u2029ADMIN logged in", "paragraph separator"),
+                ("kuro\fADMIN logged in", "form feed"),
+            })
+            {
+                var s = San(raw);
+                Check(s == "kuroADMIN logged in", $"strips {label}", s);
+            }
+
+            Check(San("kuro") == "kuro", "leaves a clean value alone");
+            Check(San("") == "", "empty string round-trips");
+            Check(San(null) == null, "null is not dereferenced");
+        }
+
+        Console.WriteLine();
         Console.WriteLine("== SsoSessionRegistry.ComputeExpiresAt vs KDNX clamp [3600, 90d] ==");
         Check(SsoSessionRegistry.ComputeExpiresAt(1000, 604800) == 1000 + 604800, "7d default passes through");
         Check(SsoSessionRegistry.ComputeExpiresAt(1000, 100) == 1000 + 3600, "below-min clamps up to 3600");
