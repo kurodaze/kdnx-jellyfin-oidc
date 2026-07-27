@@ -76,7 +76,7 @@ public class SSOController : ControllerBase
         [FromRoute] string provider,
         [FromQuery] string state)
     {
-        var errorResult = GetOidcClient(provider, out var config, out var oidcClient);
+        var errorResult = GetOidcClient(provider, out _, out var oidcClient);
         if (errorResult != null)
         {
             return errorResult;
@@ -189,17 +189,6 @@ public class SSOController : ControllerBase
             _logger.LogWarning("OIDC prepare login error for provider {Provider}: {Error} - {Description}", SanitizeLogInput(provider), SanitizeLogInput(state.Error), SanitizeLogInput(state.ErrorDescription));
             return ReturnError(StatusCodes.Status400BadRequest, "Unable to start login. Please try again.");
         }
-
-        // redirect_uri must match KDNX registration. Client ID is the public FQDN
-        // (fin.example.com) — never take Host / X-Forwarded-Host from the request.
-        if (!TryGetOidcRedirectUri(config, provider, out var actualRedirectUri, out var redirectError))
-        {
-            return ReturnError(StatusCodes.Status500InternalServerError, redirectError);
-        }
-
-        var dummyRedirectUri = $"https://___OIDC_DUMMY_REDIRECT___/sso/OID/redirect/{provider}";
-        state.StartUrl = state.StartUrl.Replace(Uri.EscapeDataString(dummyRedirectUri), Uri.EscapeDataString(actualRedirectUri));
-        state.RedirectUri = actualRedirectUri;
 
         string cookieName = "__Host-OidcState";
         Response.Cookies.Append(cookieName, state.State, new CookieOptions
@@ -442,12 +431,19 @@ public class SSOController : ControllerBase
             return ReturnError(StatusCodes.Status500InternalServerError, "OIDC Endpoint must be an absolute https URL.");
         }
 
+        // redirect_uri must match KDNX registration. Client ID is the public FQDN
+        // (fin.example.com) — never take Host / X-Forwarded-Host from the request.
+        if (!TryGetOidcRedirectUri(config, out var redirectUri, out var redirectError))
+        {
+            return ReturnError(StatusCodes.Status500InternalServerError, redirectError);
+        }
+
         var cacheKey = $"oidcclient_{provider}";
         var capturedConfig = config;
         oidcClient = _memoryCache.GetOrCreate(cacheKey, entry =>
         {
             entry.SetSlidingExpiration(TimeSpan.FromMinutes(15));
-            return CreateOidcClient(capturedConfig, oidEndpointUri, provider, "https://___OIDC_DUMMY_REDIRECT___");
+            return CreateOidcClient(capturedConfig, oidEndpointUri, redirectUri);
         });
 
         return null;
@@ -455,10 +451,11 @@ public class SSOController : ControllerBase
 
     /// <summary>
     /// Build the OIDC redirect_uri from configured Client ID (public FQDN).
-    /// KDNX registers clients as resource FQDNs and expects
-    /// https://{client_id}/sso/OID/redirect/{provider}.
+    /// KDNX expects https://{client_id}/sso/OID/redirect/{ProviderName} and compares it
+    /// byte-for-byte against its own lowercase host, so normalize rather than echo
+    /// the casing the request URL happened to carry.
     /// </summary>
-    private static bool TryGetOidcRedirectUri(OidConfig config, string provider, out string redirectUri, out string error)
+    private static bool TryGetOidcRedirectUri(OidConfig config, out string redirectUri, out string error)
     {
         redirectUri = null;
         error = null;
@@ -482,7 +479,7 @@ public class SSOController : ControllerBase
             return false;
         }
 
-        redirectUri = $"https://{clientId.TrimEnd('.')}/sso/OID/redirect/{provider}";
+        redirectUri = $"https://{clientId.TrimEnd('.').ToLowerInvariant()}/sso/OID/redirect/{config.ProviderName}";
         return true;
     }
 
@@ -496,14 +493,14 @@ public class SSOController : ControllerBase
         };
     }
 
-    private OidcClient CreateOidcClient(OidConfig config, Uri oidEndpointUri, string provider, string dummyOrigin)
+    private OidcClient CreateOidcClient(OidConfig config, Uri oidEndpointUri, string redirectUri)
     {
         // KDNX issues openid + profile only.
         var options = new OidcClientOptions
         {
             Authority = config.OidEndpoint?.Trim(),
             ClientId = config.OidClientId?.Trim(),
-            RedirectUri = dummyOrigin + $"/sso/OID/redirect/{provider}",
+            RedirectUri = redirectUri,
             Scope = "openid profile",
             DisablePushedAuthorization = false,
             LoggerFactory = _loggerFactory,
