@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Latest release main branch.
+Latest main branch release.
 
 ## Vulnerability Reporting
 
