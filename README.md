@@ -1,6 +1,6 @@
 # kdnx-jellyfin-oidc
 
-A Jellyfin plugin for OpenID Connect (OIDC) authentication. This plugin allows users to log into Jellyfin using an external OIDC Provider (typically KDNX).
+A Jellyfin plugin for OpenID Connect (OIDC) authentication. This plugin allows users to log into Jellyfin using KDNX OIDC Provider.
 
 ## Installation
 
@@ -95,16 +95,7 @@ The callback page now:
 2. Falls back to the same API if localStorage is still empty
 3. Uses NativeShell for app name / version / device name when present
 
-No `index.html` patch and no extra scripts under `/usr/share/jellyfin/web/` are required
-for in-app WebView SSO.
-
-**Requirements for mobile SSO to complete in the app:**
-
-- Start login from the **Jellyfin app WebView** (not a random external browser tab)
-- Complete the OIDC redirect back into that same WebView (same origin as Jellyfin)
-
 This plugin only supports OIDC that starts and finishes in that Jellyfin web context.
 There is no Quick Connect path and no alternate client login flow.
 
-After installing/updating the plugin, restart Jellyfin and clear the Android app cache once
-if an old half-login is stuck.
+After installing/updating the plugin, restart Jellyfin and clear the Android app cache.
