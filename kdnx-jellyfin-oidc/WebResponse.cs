@@ -6,9 +6,6 @@ using System.Reflection;
 
 namespace Kdnx.Jellyfin.Oidc;
 
-/// <summary>
-/// A helper class to return HTML for the client's auth flow.
-/// </summary>
 public static class WebResponse
 {
     private static readonly Lazy<string> _baseHtml = new Lazy<string>(() =>
@@ -25,14 +22,7 @@ public static class WebResponse
         return reader.ReadToEnd();
     });
 
-    /// <summary>
-    /// A generator for the web response that incorporates the data from the server.
-    /// </summary>
-    /// <param name="data">The data of the auth flow (the state ID for OpenID).</param>
-    /// <param name="provider">The name of the provider to callback to.</param>
-    /// <param name="pathBase">The path base URL of the Jellyfin installation.</param>
-    /// <param name="nonce">The nonce string to include in the OIDC state.</param>
-    /// <returns>A string with the HTML to serve to the client.</returns>
+    /// <summary>Substitutions are JSON-encoded, so they land in the script as literals.</summary>
     public static string Generator(string data, string provider, string pathBase, string nonce)
     {
         pathBase = pathBase.TrimEnd('/');

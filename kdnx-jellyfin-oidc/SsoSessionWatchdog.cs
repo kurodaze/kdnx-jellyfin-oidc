@@ -18,11 +18,6 @@ public sealed class SsoSessionWatchdog : IHostedService, IDisposable
     private Timer _timer;
     private int _tickRunning;
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="SsoSessionWatchdog"/> class.
-    /// </summary>
-    /// <param name="sessionManager">Jellyfin session manager.</param>
-    /// <param name="logger">Logger.</param>
     public SsoSessionWatchdog(ISessionManager sessionManager, ILogger<SsoSessionWatchdog> logger)
     {
         _sessionManager = sessionManager;

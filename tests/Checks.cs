@@ -3,8 +3,6 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Options;
-using Duende.IdentityModel.OidcClient;
 using Kdnx.Jellyfin.Oidc;
 using Kdnx.Jellyfin.Oidc.Api;
 using Kdnx.Jellyfin.Oidc.Config;
@@ -233,50 +231,6 @@ static class Program
 
             Check(cache.Count <= SsoFlowCache.MaxEntries,
                 $"{flood} unauthenticated inserts compact to <= {SsoFlowCache.MaxEntries}", cache.Count);
-            cache.Dispose();
-        }
-
-        Console.WriteLine();
-        Console.WriteLine("== how much memory does one cached login flow actually cost? ==");
-        {
-            // A realistic KDNX authorize URL, as Duende PrepareLoginAsync would produce.
-            static TimedAuthorizeState Realistic(int i) => new(new AuthorizeState
-            {
-                State = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)),
-                CodeVerifier = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(64)),
-                RedirectUri = "https://fin.example.com/sso/OID/redirect/KDNX",
-                StartUrl = "https://kdnx-auth.example.com/authorize?client_id=fin.example.com"
-                         + "&redirect_uri=https%3A%2F%2Ffin.example.com%2Fsso%2FOID%2Fredirect%2FKDNX"
-                         + "&response_type=code&scope=openid%20profile&state=" + i.ToString("x8")
-                         + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16))
-                         + "&code_challenge=" + Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))
-                         + "&code_challenge_method=S256&nonce="
-                         + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)),
-            });
-
-            const int n = 20_000;
-            var cache = new MemoryCache(Options.Create(new MemoryCacheOptions()));
-            var opts = new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromMinutes(10));
-
-            GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
-            var before = GC.GetTotalMemory(true);
-            for (int i = 0; i < n; i++)
-            {
-                cache.Set($"oidcstate_{i:x8}", Realistic(i), opts);
-            }
-
-            GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
-            var perEntry = (GC.GetTotalMemory(true) - before) / (double)n;
-            GC.KeepAlive(cache);
-
-            Console.WriteLine($"  measured  ~{perEntry:F0} bytes per in-flight login");
-            foreach (var cap in new long[] { 500, 1_000, 10_000 })
-            {
-                Console.WriteLine($"  cap {cap,6} -> worst case {(cap * perEntry) / (1024 * 1024),6:F1} MB pinned for up to 10 min");
-            }
-
-            Console.WriteLine($"  configured cap is {SsoFlowCache.MaxEntries} -> "
-                + $"{(SsoFlowCache.MaxEntries * perEntry) / (1024 * 1024):F1} MB");
             cache.Dispose();
         }
 

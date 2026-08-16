@@ -30,11 +30,7 @@ const ssoConfigurationPage = {
       ApiClient.updatePluginConfiguration(
         ssoConfigurationPage.pluginUniqueId,
         config,
-      ).then(function (result) {
-        Dashboard.processPluginConfigurationUpdateResult(result);
-        ssoConfigurationPage.loadConfiguration(page);
-        Dashboard.alert("Settings saved.");
-      });
+      ).then(Dashboard.processPluginConfigurationUpdateResult);
     });
   },
   addStyle: (view) => {

@@ -21,9 +21,6 @@ using Microsoft.Extensions.Logging;
 
 namespace Kdnx.Jellyfin.Oidc.Api;
 
-/// <summary>
-/// The sso api controller.
-/// </summary>
 [ApiController]
 [Route("[controller]")]
 public class SSOController : ControllerBase
@@ -37,16 +34,6 @@ public class SSOController : ControllerBase
     private readonly SsoFlowCache _memoryCache;
     private static readonly string _assemblyVersion = typeof(SSOController).Assembly.GetName().Version?.ToString() ?? "0.0.0.0";
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="SSOController"/> class.
-    /// </summary>
-    /// <param name="logger">The logger instance.</param>
-    /// <param name="loggerFactory">The logger factory.</param>
-    /// <param name="sessionManager">The session manager.</param>
-    /// <param name="userManager">The user manager.</param>
-    /// <param name="cryptoProvider">The crypto provider.</param>
-    /// <param name="httpClientFactory">The HTTP client factory.</param>
-    /// <param name="memoryCache">The plugin-private, size-capped SSO flow cache.</param>
     public SSOController(
         ILogger<SSOController> logger,
         ILoggerFactory loggerFactory,
@@ -65,12 +52,6 @@ public class SSOController : ControllerBase
         _memoryCache = memoryCache;
     }
 
-    /// <summary>
-    /// Handles the OpenID post callback.
-    /// </summary>
-    /// <param name="provider">The provider name.</param>
-    /// <param name="state">The state parameter.</param>
-    /// <returns>A <see cref="Task{ActionResult}"/> representing the asynchronous operation.</returns>
     [HttpGet("OID/redirect/{provider}")]
     public async Task<ActionResult> OidRedirect(
         [FromRoute] string provider,
@@ -150,10 +131,11 @@ public class SSOController : ControllerBase
                 var cacheOptions = new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromMinutes(10)).SetSize(1);
                 _memoryCache.Set($"oidcauth_{newToken}", timedState, cacheOptions);
 
+                // Assigned, not appended: a second CSP header would intersect with this one.
                 string nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(16));
-                Response.Headers.Append("Content-Security-Policy", $"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; frame-src 'self'; connect-src 'self'; base-uri 'none';");
-                Response.Headers.Append("X-Content-Type-Options", "nosniff");
-                Response.Headers.Append("X-Frame-Options", "SAMEORIGIN");
+                Response.Headers.ContentSecurityPolicy = $"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; frame-src 'self'; connect-src 'self'; base-uri 'none';";
+                Response.Headers.XContentTypeOptions = "nosniff";
+                Response.Headers.XFrameOptions = "SAMEORIGIN";
 
                 // Body carries a single-use credential (RFC 6749 5.1).
                 Response.Headers.CacheControl = "no-store";
@@ -172,11 +154,6 @@ public class SSOController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Starts the OpenID challenge.
-    /// </summary>
-    /// <param name="provider">The provider.</param>
-    /// <returns>A <see cref="Task{ActionResult}"/> representing the asynchronous operation.</returns>
     [HttpGet("OID/start/{provider}")]
     public async Task<ActionResult> OidChallenge(string provider)
     {
@@ -225,12 +202,6 @@ public class SSOController : ControllerBase
     // paragraph separators. Vertical tab is not a newline and is left alone.
     private static string SanitizeLogInput(string input) => input?.ReplaceLineEndings(string.Empty);
 
-    /// <summary>
-    /// Authenticates a user with a provider callback.
-    /// </summary>
-    /// <param name="provider">The provider name.</param>
-    /// <param name="response">The authentication response details.</param>
-    /// <returns>A <see cref="Task{ActionResult}"/> representing the asynchronous operation.</returns>
     [HttpPost("OID/Auth/{provider}")]
     [Consumes(MediaTypeNames.Application.Json)]
     [Produces(MediaTypeNames.Application.Json)]
@@ -255,23 +226,10 @@ public class SSOController : ControllerBase
                 {
                     Guid userId = await GetOrCreateUser(timedState.Username, timedState.SubClaim).ConfigureAwait(false);
                     var authenticationResult = await Authenticate(userId, response).ConfigureAwait(false);
-                    if (!string.IsNullOrEmpty(authenticationResult.AccessToken)
-                        && timedState.SessionExpiresAtUnix > 0)
-                    {
-                        SsoSessionRegistry.Register(
-                            authenticationResult.AccessToken,
-                            timedState.SessionExpiresAtUnix);
-                    }
+                    SsoSessionRegistry.Register(authenticationResult.AccessToken, timedState.SessionExpiresAtUnix);
 
-                    // Fields the callback reads, plus SessionExpiresAt for client-side policy.
-                    return Ok(new
-                    {
-                        authenticationResult.User,
-                        authenticationResult.AccessToken,
-                        authenticationResult.ServerId,
-                        authenticationResult.SessionInfo,
-                        SessionExpiresAt = timedState.SessionExpiresAtUnix
-                    });
+                    // Only the fields the callback page reads.
+                    return Ok(new { authenticationResult.User, authenticationResult.AccessToken });
                 }
             }
             finally
@@ -373,13 +331,10 @@ public class SSOController : ControllerBase
             DeviceName = authResponse.DeviceName
         };
 
-        _logger.LogInformation("Auth request created...");
         return await _sessionManager.AuthenticateDirect(authRequest).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Reads required session policy claims from the KDNX identity token.
-    /// </summary>
+    // Reads required session policy claims from the KDNX identity token.
     private static bool TryGetSessionClaims(string identityToken, out long authTime, out long sessionMaxAge)
     {
         authTime = 0;
@@ -456,12 +411,9 @@ public class SSOController : ControllerBase
         return null;
     }
 
-    /// <summary>
-    /// Build the OIDC redirect_uri from configured Client ID (public FQDN).
-    /// KDNX expects https://{client_id}/sso/OID/redirect/{ProviderName} and compares it
-    /// byte-for-byte against its own lowercase host, so normalize rather than echo
-    /// the casing the request URL happened to carry.
-    /// </summary>
+    // KDNX expects https://{client_id}/sso/OID/redirect/{ProviderName} and compares it
+    // byte-for-byte against its own lowercase host, so normalize rather than echo
+    // the casing the request URL happened to carry.
     private static bool TryGetOidcRedirectUri(OidConfig config, out string redirectUri, out string error)
     {
         redirectUri = null;
@@ -509,7 +461,6 @@ public class SSOController : ControllerBase
             ClientId = config.OidClientId?.Trim(),
             RedirectUri = redirectUri,
             Scope = "openid profile",
-            DisablePushedAuthorization = false,
             LoggerFactory = _loggerFactory,
             // UserInfo over TLS to KDNX after PKCE code exchange; sub must match ID token claims.
             LoadProfile = true,
@@ -521,9 +472,7 @@ public class SSOController : ControllerBase
             }
         };
 
-        // Duende default uses NoValidationIdentityTokenValidator when RequireIdentityTokenSignature
-        // is false (channel trust: TLS + PKCE + UserInfo). Default alg list omits EdDSA; add it
-        // so a future signature validator can accept KDNX tokens without another code change.
+        // Duende's default alg list omits EdDSA, which is all KDNX signs with.
         options.Policy.ValidSignatureAlgorithms.Add("EdDSA");
 
         // Already Duende defaults; pinned so a library change can't relax them.
@@ -534,74 +483,37 @@ public class SSOController : ControllerBase
     }
 }
 
-/// <summary>
-/// Represents the authentication response parameters from the client.
-/// </summary>
+/// <summary>Client details posted by the callback page to redeem a one-time Data token.</summary>
 public class AuthResponse
 {
-    /// <summary>
-    /// Gets or sets the device ID.
-    /// </summary>
     public string DeviceID { get; set; }
 
-    /// <summary>
-    /// Gets or sets the name of the device.
-    /// </summary>
     public string DeviceName { get; set; }
 
-    /// <summary>
-    /// Gets or sets the name of the application.
-    /// </summary>
     public string AppName { get; set; }
 
-    /// <summary>
-    /// Gets or sets the application version.
-    /// </summary>
     public string AppVersion { get; set; }
 
-    /// <summary>
-    /// Gets or sets the authentication data payload.
-    /// </summary>
     public string Data { get; set; }
 }
 
-/// <summary>
-/// Represents the state of an active OpenID authorization flow with timestamp tracking.
-/// </summary>
+/// <summary>An in-flight authorization, from /OID/start until the callback redeems it.</summary>
 public class TimedAuthorizeState
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="TimedAuthorizeState"/> class.
-    /// </summary>
-    /// <param name="state">The authorization state.</param>
     public TimedAuthorizeState(AuthorizeState state)
     {
         State = state;
         Valid = false;
     }
 
-    /// <summary>
-    /// Gets or sets the OIDC client authorization state.
-    /// </summary>
     public AuthorizeState State { get; set; }
 
-    /// <summary>
-    /// Gets or sets a value indicating whether this state is valid.
-    /// </summary>
     public bool Valid { get; set; }
 
-    /// <summary>
-    /// Gets or sets the resolved username.
-    /// </summary>
     public string Username { get; set; }
 
-    /// <summary>
-    /// Gets or sets absolute Unix time when the KDNX OIDC session must re-authenticate.
-    /// </summary>
+    /// <summary>Absolute Unix time when the KDNX OIDC session must re-authenticate.</summary>
     public long SessionExpiresAtUnix { get; set; }
 
-    /// <summary>
-    /// Gets or sets the original OIDC subject claim.
-    /// </summary>
     public string SubClaim { get; set; }
 }

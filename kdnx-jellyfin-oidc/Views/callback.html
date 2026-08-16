@@ -27,20 +27,7 @@ function getDeviceNameFromUa() {
 }
 
 // Official Android (and similar) embeds NativeShell.AppHost.deviceId() but does not
-// write jellyfin-web's localStorage key `_deviceId2`. Seed it before the iframe
-// loads so jellyfin-web does not generate a different random id.
-function seedDeviceIdFromNativeShell() {
-    try {
-        const host = window.NativeShell && window.NativeShell.AppHost;
-        if (!host || typeof host.deviceId !== 'function') return;
-        if (localStorage.getItem('_deviceId2')) return;
-        const id = host.deviceId();
-        if (id) localStorage.setItem('_deviceId2', String(id));
-    } catch (e) {
-        // Ignore — fall back to localStorage / iframe path.
-    }
-}
-
+// write jellyfin-web's localStorage key `_deviceId2`, so seed it from NativeShell.
 function resolveClientMeta() {
     const host = window.NativeShell && window.NativeShell.AppHost;
     let deviceId = localStorage.getItem('_deviceId2');
@@ -78,8 +65,8 @@ function serverIdReady() {
 const sleep = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 async function main() {
-    // Prefer the native app device id before jellyfin-web can invent a web id.
-    seedDeviceIdFromNativeShell();
+    // Seeds _deviceId2 before jellyfin-web can invent a web id.
+    let meta = resolveClientMeta();
 
     // The wipe forces jellyfin-web to re-bootstrap; keep other servers from going with it.
     const savedCredentials = localStorage.getItem('jellyfin_credentials');
@@ -88,7 +75,6 @@ async function main() {
 
     const data = "___jsonData___";
     let attempts = 0;
-    let meta = resolveClientMeta();
 
     // Wait for server id from the hidden jellyfin-web iframe (shared localStorage).
     // Device id may already be present from NativeShell or from jellyfin-web.
@@ -159,12 +145,6 @@ async function main() {
     // AccessToken in localStorage matches upstream jellyfin-web credential storage.
     localStorage.setItem('jellyfin_credentials', JSON.stringify(jfCreds));
     localStorage.setItem('enableAutoLogin', 'true');
-    // KDNX OIDC absolute session expiry (auth_time + session_max_age), Unix seconds.
-    if (responseJson['SessionExpiresAt']) {
-        localStorage.setItem('kdnx_session_expires_at', String(responseJson['SessionExpiresAt']));
-    } else {
-        localStorage.removeItem('kdnx_session_expires_at');
-    }
     window.location.replace("___jsonPunycodeBaseUrl___" + '/web/index.html');
 }
 

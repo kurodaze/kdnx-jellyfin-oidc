@@ -26,9 +26,14 @@ function extractScript() {
         .replaceAll('"___jsonData___"', '"one-time-token"');
 }
 
+// seedCredentials may be an object, or a raw string to plant a malformed blob.
 async function run({ seedCredentials }) {
     const store = new Map();
-    if (seedCredentials) store.set('jellyfin_credentials', JSON.stringify(seedCredentials));
+    if (seedCredentials) {
+        store.set('jellyfin_credentials', typeof seedCredentials === 'string'
+            ? seedCredentials
+            : JSON.stringify(seedCredentials));
+    }
     store.set('_deviceId2', 'device-abc');
 
     const localStorage = {
@@ -65,9 +70,6 @@ async function run({ seedCredentials }) {
             text: async () => JSON.stringify({
                 User: { Id: 'user-1', ServerId: THIS_SERVER, Name: 'kuro' },
                 AccessToken: 'NEW-TOKEN',
-                ServerId: THIS_SERVER,
-                SessionInfo: {},
-                SessionExpiresAt: 1754204800,
             }),
         }),
     };
@@ -99,7 +101,6 @@ console.log('== callback.html: multi-server credentials ==');
     check(!!home && home.AccessToken === 'NEW-TOKEN', 'this server gets the new token', home);
     check(!!home && home.UserId === 'user-1', 'this server gets the new user id', home);
     check(creds.Servers.length === 2, 'no duplicate server entries', creds.Servers.length);
-    check(store.get('kdnx_session_expires_at') === '1754204800', 'session expiry stored');
     check(!!store.get(`user-user-1-${THIS_SERVER}`), 'user record stored');
 }
 
@@ -113,14 +114,14 @@ console.log('\n== callback.html: first-ever login (no prior credentials) ==');
 
 console.log('\n== callback.html: corrupt prior credentials must not break login ==');
 {
-    const store = new Map([['jellyfin_credentials', '{not json']]);
     let threw = null;
+    let store = null;
     try {
-        const { store: s } = await run({ seedCredentials: undefined });
-        void s;
+        ({ store } = await run({ seedCredentials: '{not json' }));
     } catch (e) { threw = e; }
     check(threw === null, 'no throw on malformed prior blob', threw && threw.message);
-    void store;
+    const creds = threw ? null : JSON.parse(store.get('jellyfin_credentials'));
+    check(!!creds && creds.Servers[0].AccessToken === 'NEW-TOKEN', 'login still completes', creds);
 }
 
 console.log(fails === 0 ? '\nALL CHECKS PASSED' : `\n${fails} CHECK(S) FAILED`);

@@ -26,9 +26,7 @@ so it exercises shipped code rather than a copy of the logic.
   range as KDNX's `normalize_oidc_session_max_age_secs`.
 - **`SsoFlowCache`** stays bounded: 50k unauthenticated inserts compact back to
   the cap, and an entry without a size throws — which is what makes the
-  `SetSize` calls in `SSOController` load-bearing rather than decorative. It
-  also prints the measured cost per in-flight login, which is where the
-  `MaxEntries` value comes from.
+  `SetSize` calls in `SSOController` load-bearing rather than decorative.
 
 ## `callback-page.mjs`
 

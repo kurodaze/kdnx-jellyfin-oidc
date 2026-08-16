@@ -19,18 +19,12 @@ public sealed class SsoFlowCache : MemoryCache
     /// </summary>
     public const long MaxEntries = 1_000;
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="SsoFlowCache"/> class.
-    /// </summary>
     public SsoFlowCache()
         : base(Options.Create(new MemoryCacheOptions { SizeLimit = MaxEntries }))
     {
     }
 }
 
-/// <summary>
-/// Registers plugin services with the Jellyfin host.
-/// </summary>
 public class PluginServiceRegistrator : IPluginServiceRegistrator
 {
     /// <inheritdoc />
