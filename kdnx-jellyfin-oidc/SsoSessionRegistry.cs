@@ -14,10 +14,10 @@ public static class SsoSessionRegistry
     private static readonly ConcurrentDictionary<string, long> Sessions = new(StringComparer.Ordinal);
 
     /// <summary>Matches KDNX's own clamp on session_max_age.</summary>
-    public const long MinSessionMaxAgeSecs = 3600;
+    public static readonly long MinSessionMaxAgeSecs = 3600;
 
     /// <inheritdoc cref="MinSessionMaxAgeSecs"/>
-    public const long MaxSessionMaxAgeSecs = 90L * 24 * 60 * 60;
+    public static readonly long MaxSessionMaxAgeSecs = 90L * 24 * 60 * 60;
 
     public static void Register(string accessToken, long expiresAtUnix)
     {

@@ -98,7 +98,7 @@ static class Program
                 if (seg.Contains('-') && seg.Contains('_')) break;
             }
             var ok = SessionClaims(tok, out var at, out var sma);
-            Check(seg.Contains('-') && seg.Contains('_'), "payload uses base64url '-' AND '_' alphabet", seg);
+            Check(seg != null && seg.Contains('-') && seg.Contains('_'), "payload uses base64url '-' AND '_' alphabet", seg);
             Check(ok && at == 1753599000 && sma == 604800, "  ...and it still decodes correctly", $"{ok} {at} {sma}");
         }
 

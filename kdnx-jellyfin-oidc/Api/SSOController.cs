@@ -355,19 +355,19 @@ public class SSOController : ControllerBase
             var json = System.Text.Encoding.UTF8.GetString(System.Buffers.Text.Base64Url.DecodeFromChars(parts[1]));
             using var doc = System.Text.Json.JsonDocument.Parse(json);
             var root = doc.RootElement;
-            if (!root.TryGetProperty("auth_time", out var at) || !at.TryGetInt64(out authTime) || authTime <= 0)
+            if (!root.TryGetProperty("auth_time", out var at) || at.ValueKind != System.Text.Json.JsonValueKind.Number || !at.TryGetInt64(out authTime) || authTime <= 0)
             {
                 return false;
             }
 
-            if (!root.TryGetProperty("session_max_age", out var sma) || !sma.TryGetInt64(out sessionMaxAge) || sessionMaxAge <= 0)
+            if (!root.TryGetProperty("session_max_age", out var sma) || sma.ValueKind != System.Text.Json.JsonValueKind.Number || !sma.TryGetInt64(out sessionMaxAge) || sessionMaxAge <= 0)
             {
                 return false;
             }
 
             return true;
         }
-        catch
+        catch (Exception ex) when (ex is FormatException or System.Text.Json.JsonException or InvalidOperationException or ArgumentException)
         {
             return false;
         }
