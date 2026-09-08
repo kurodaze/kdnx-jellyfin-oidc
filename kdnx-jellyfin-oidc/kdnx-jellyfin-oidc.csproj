@@ -1,10 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Kdnx.Jellyfin.Oidc</RootNamespace>
-    <AssemblyVersion>1.0.9.0</AssemblyVersion>
-    <FileVersion>1.0.9.0</FileVersion>
+    <AssemblyVersion>1.2.0.0</AssemblyVersion>
+    <FileVersion>1.2.0.0</FileVersion>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
@@ -22,8 +22,8 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Duende.IdentityModel.OidcClient" Version="6.0.1" />
-    <PackageReference Include="Jellyfin.Controller" Version="10.11.0" />
-    <PackageReference Include="Jellyfin.Model" Version="10.11.0" />
+    <PackageReference Include="Jellyfin.Controller" Version="12.0.0" />
+    <PackageReference Include="Jellyfin.Model" Version="12.0.0" />
   </ItemGroup>
 
 </Project>

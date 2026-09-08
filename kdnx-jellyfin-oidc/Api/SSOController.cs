@@ -188,6 +188,7 @@ public class SSOController : ControllerBase
 
         if (!Uri.TryCreate(state.StartUrl, UriKind.Absolute, out Uri startUri) ||
             !Uri.TryCreate(config.OidEndpoint, UriKind.Absolute, out Uri authorityUri) ||
+            startUri.Scheme != Uri.UriSchemeHttps ||
             startUri.Host != authorityUri.Host)
         {
             _logger.LogWarning("OIDC redirect URL host validation failed for provider {Provider}", SanitizeLogInput(provider));
@@ -253,11 +254,15 @@ public class SSOController : ControllerBase
             if (mapping != null)
             {
                 user = _userManager.GetUserById(mapping.UserId);
-                if (user != null && user.Username != canonicalName && _userManager.GetUserByName(canonicalName) == null)
+                if (user != null && user.Username != canonicalName)
                 {
-                    _logger.LogInformation("Updating username for {SubClaim} from {OldName} to {NewName}", SanitizeLogInput(subClaim), SanitizeLogInput(user.Username), SanitizeLogInput(canonicalName));
-                    user.Username = canonicalName;
-                    await _userManager.UpdateUserAsync(user).ConfigureAwait(false);
+                    var existingUser = _userManager.GetUserByName(canonicalName);
+                    if (existingUser == null || existingUser.Id == user.Id)
+                    {
+                        _logger.LogInformation("Updating username for {SubClaim} from {OldName} to {NewName}", SanitizeLogInput(subClaim), SanitizeLogInput(user.Username), SanitizeLogInput(canonicalName));
+                        user.Username = canonicalName;
+                        await _userManager.UpdateUserAsync(user).ConfigureAwait(false);
+                    }
                 }
             }
         }
@@ -435,6 +440,18 @@ public class SSOController : ControllerBase
             || clientId.Contains('#'))
         {
             error = "OIDC Client ID must be the public hostname only (e.g. fin.example.com).";
+            return false;
+        }
+
+        var providerName = config.ProviderName?.Trim();
+        if (string.IsNullOrEmpty(providerName)
+            || providerName.Contains('/')
+            || providerName.Contains('\\')
+            || providerName.Contains(' ')
+            || providerName.Contains('?')
+            || providerName.Contains('#'))
+        {
+            error = "OIDC Provider Name must be a valid, single URL-safe identifier.";
             return false;
         }
 

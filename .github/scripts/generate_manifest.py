@@ -65,7 +65,7 @@ def main():
         tag_build_yaml_text = None
         try:
             tag_build_yaml_text = subprocess.check_output(
-                ['git', 'show', f'{tag_name}:build.yaml'], 
+                ['git', 'show', '--', f'{tag_name}:build.yaml'], 
                 stderr=subprocess.DEVNULL
             ).decode('utf-8')
         except subprocess.CalledProcessError:
@@ -84,7 +84,7 @@ def main():
             
         # removeprefix, not lstrip: lstrip strips characters, so "version-1" -> "ersion-1".
         version_str = tag_build_info.get('version', (tag_name or '').removeprefix('v'))
-        target_abi = tag_build_info.get('targetAbi', '10.11.0.0')
+        target_abi = tag_build_info.get('targetAbi', '12.0.0.0')
 
         assets = release.get('assets', [])
         zip_asset = next((a for a in assets if a['name'].endswith('.zip')), None)

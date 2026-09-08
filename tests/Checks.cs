@@ -158,6 +158,21 @@ static class Program
             Check(!ok && uri == null && !string.IsNullOrEmpty(err), $"rejects client id with {label}", uri);
         }
 
+        foreach (var (provider, label) in new[]
+        {
+            ("KDNX/evil", "path"),
+            ("KDNX?evil", "query"),
+            ("KDNX#evil", "fragment"),
+            ("KDNX\\evil", "backslash"),
+            ("KDNX evil", "space"),
+            ("", "empty"),
+            (null, "null"),
+        })
+        {
+            var ok = RedirectUri(new OidConfig { OidClientId = "fin.example.com", ProviderName = provider }, out var uri, out var err);
+            Check(!ok && uri == null && !string.IsNullOrEmpty(err), $"rejects provider name with {label}", uri);
+        }
+
         Console.WriteLine();
         Console.WriteLine("== SanitizeLogInput: no line break survives, on any return path ==");
         {
