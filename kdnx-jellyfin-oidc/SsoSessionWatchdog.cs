@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Session;
@@ -25,10 +26,31 @@ public sealed class SsoSessionWatchdog : IHostedService, IDisposable
     }
 
     /// <inheritdoc />
-    public Task StartAsync(CancellationToken cancellationToken)
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
+        try
+        {
+            var dataFolder = KdnxOidcPlugin.Instance?.DataFolderPath;
+            if (!string.IsNullOrEmpty(dataFolder))
+            {
+                SsoSessionRegistry.Initialize(dataFolder);
+                if (SsoSessionRegistry.Count > 0)
+                {
+                    _logger.LogInformation(
+                        "Loaded {Count} active SSO session(s) from persistent storage",
+                        SsoSessionRegistry.Count);
+                }
+            }
+
+            // Immediately purge and logout any sessions that expired while offline
+            await RunTickAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to initialize persistent SSO session registry");
+        }
+
         _timer = new Timer(OnTick, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
-        return Task.CompletedTask;
     }
 
     /// <inheritdoc />
@@ -67,6 +89,8 @@ public sealed class SsoSessionWatchdog : IHostedService, IDisposable
             }
 
             var revoked = 0;
+            var tokensToRemove = new List<string>(expired.Count);
+
             foreach (var accessToken in expired)
             {
                 try
@@ -80,9 +104,11 @@ public sealed class SsoSessionWatchdog : IHostedService, IDisposable
                 }
                 finally
                 {
-                    SsoSessionRegistry.Remove(accessToken);
+                    tokensToRemove.Add(accessToken);
                 }
             }
+
+            SsoSessionRegistry.RemoveRange(tokensToRemove);
 
             if (revoked > 0)
             {

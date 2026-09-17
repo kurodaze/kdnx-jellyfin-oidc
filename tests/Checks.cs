@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -208,6 +209,55 @@ static class Program
         Check(SsoSessionRegistry.ComputeExpiresAt(1000, 0) == null, "session_max_age 0 -> null");
         Check(SsoSessionRegistry.MinSessionMaxAgeSecs == 3600 && SsoSessionRegistry.MaxSessionMaxAgeSecs == 90L * 24 * 60 * 60,
             "bounds equal KDNX MIN/MAX_OIDC_SESSION_MAX_AGE_SECS");
+
+        Console.WriteLine();
+        Console.WriteLine("== SsoSessionRegistry: Persistent storage across restarts ==");
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "kdnx_test_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                SsoSessionRegistry.Clear(resetStorage: true);
+                SsoSessionRegistry.Initialize(tempDir);
+                Check(SsoSessionRegistry.Count == 0, "initializes empty");
+
+                SsoSessionRegistry.Register("tok_active", 2000000000);
+                SsoSessionRegistry.Register("tok_expired", 1000);
+                Check(SsoSessionRegistry.Count == 2, "registers 2 tokens");
+
+                var storageFile = Path.Combine(tempDir, "sso-sessions.json");
+                Check(File.Exists(storageFile), "persists sso-sessions.json to disk");
+
+                // Simulate server restart: clear memory, re-initialize from same tempDir
+                SsoSessionRegistry.Clear(resetStorage: true);
+                Check(SsoSessionRegistry.Count == 0, "cleared memory simulated restart");
+
+                SsoSessionRegistry.Initialize(tempDir);
+                Check(SsoSessionRegistry.Count == 2, "reloads 2 tokens from disk after restart");
+
+                var expired = SsoSessionRegistry.CollectExpired(5000);
+                Check(expired.Count == 1 && expired[0] == "tok_expired", "collects expired token");
+
+                SsoSessionRegistry.RemoveRange(expired);
+                Check(SsoSessionRegistry.Count == 1, "removes expired token");
+
+                // Simulate second restart: verify deletion was persisted
+                SsoSessionRegistry.Clear(resetStorage: true);
+                SsoSessionRegistry.Initialize(tempDir);
+                Check(SsoSessionRegistry.Count == 1, "reloads only remaining active token after restart");
+
+                SsoSessionRegistry.Remove("tok_active");
+                Check(SsoSessionRegistry.Count == 0, "removed last token");
+
+                SsoSessionRegistry.Clear(resetStorage: true);
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, true);
+                }
+            }
+        }
 
         Console.WriteLine();
         Console.WriteLine("== SsoFlowCache: unauthenticated /OID/start cannot grow it without bound ==");
