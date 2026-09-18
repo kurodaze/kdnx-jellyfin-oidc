@@ -14,9 +14,9 @@ so it exercises shipped code rather than a copy of the logic.
 
 - **`TryGetSessionClaims`** against KDNX-shaped ID tokens (`server/src/auth.rs`
   in the KDNX repo builds these): every base64 length residue, payloads that
-  use the base64url `-`/`_` alphabet, and the rejection cases — missing or zero
-  `auth_time`, missing `session_max_age`, a stringly-typed claim, malformed
-  segments.
+  use the base64url `-`/`_` alphabet, and rejection cases (missing or zero
+  `auth_time`, missing `session_max_age`, stringly-typed claims, malformed
+  segments).
 - **`TryGetOidcRedirectUri`** must match what KDNX accepts. KDNX resolves
   `client_id` case-insensitively but compares `redirect_uri` byte-for-byte
   against its own lowercase host, so mixed case, stray whitespace and a
@@ -25,8 +25,8 @@ so it exercises shipped code rather than a copy of the logic.
 - **`SsoSessionRegistry.ComputeExpiresAt`** clamps to the same `[3600, 90d]`
   range as KDNX's `normalize_oidc_session_max_age_secs`.
 - **`SsoFlowCache`** stays bounded: 50k unauthenticated inserts compact back to
-  the cap, and an entry without a size throws — which is what makes the
-  `SetSize` calls in `SSOController` load-bearing rather than decorative.
+  the cap, and an entry without a size throws, ensuring `SetSize` calls in
+  `SSOController` remain load-bearing rather than decorative.
 
 ## `callback-page.mjs`
 
