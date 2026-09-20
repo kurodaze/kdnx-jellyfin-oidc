@@ -333,10 +333,139 @@ public class SSOController : ControllerBase
             App = authResponse.AppName,
             AppVersion = authResponse.AppVersion,
             DeviceId = authResponse.DeviceID,
-            DeviceName = authResponse.DeviceName
+            DeviceName = authResponse.DeviceName,
+            RemoteEndPoint = ResolveClientRemoteEndPoint(HttpContext?.Connection?.RemoteIpAddress, Request?.Headers)
         };
 
         return await _sessionManager.AuthenticateDirect(authRequest).ConfigureAwait(false);
+    }
+
+    internal static string ResolveClientRemoteEndPoint(
+        System.Net.IPAddress connectionRemoteIp,
+        IHeaderDictionary headers)
+    {
+        string ipStr = null;
+        if (connectionRemoteIp != null)
+        {
+            var ip = connectionRemoteIp.IsIPv4MappedToIPv6
+                ? connectionRemoteIp.MapToIPv4()
+                : connectionRemoteIp;
+            ipStr = ip.ToString();
+        }
+
+        if ((string.IsNullOrEmpty(ipStr) || IsPrivateIp(connectionRemoteIp)) && headers != null)
+        {
+            string[] proxyHeaders = ["X-Forwarded-For", "X-Real-IP", "X-KDNX-Client-IP"];
+            foreach (var name in proxyHeaders)
+            {
+                if (headers.TryGetValue(name, out var val) && !string.IsNullOrWhiteSpace(val))
+                {
+                    var candidate = NormalizeIpCandidate(val.ToString().Split(',')[0]);
+                    if (!string.IsNullOrEmpty(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+            }
+        }
+
+        return ipStr ?? string.Empty;
+    }
+
+    private static string NormalizeIpCandidate(string candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return null;
+        }
+
+        var trimmed = candidate.Trim().Trim('"');
+
+        System.Net.IPAddress ip = null;
+
+        // 1. Raw IP string (e.g. 198.51.100.42 or 2001:db8::1)
+        if (!System.Net.IPAddress.TryParse(trimmed, out ip))
+        {
+            // 2. Bracketed IPv6 without port (e.g. [2001:db8::1])
+            if (trimmed.StartsWith('[') && trimmed.EndsWith(']'))
+            {
+                var unbracketed = trimmed[1..^1];
+                _ = System.Net.IPAddress.TryParse(unbracketed, out ip);
+            }
+            // 3. Endpoint with port (e.g. 198.51.100.42:8443 or [2001:db8::1]:443)
+            else if (System.Net.IPEndPoint.TryParse(trimmed, out var ep))
+            {
+                ip = ep.Address;
+            }
+        }
+
+        if (ip == null)
+        {
+            return null;
+        }
+
+        // Normalize IPv4-mapped IPv6 (::ffff:x.x.x.x -> x.x.x.x)
+        if (ip.IsIPv4MappedToIPv6)
+        {
+            ip = ip.MapToIPv4();
+        }
+
+        // Reject unspecified (0.0.0.0, ::) or multicast addresses
+        if (ip.Equals(System.Net.IPAddress.Any) || ip.Equals(System.Net.IPAddress.IPv6Any))
+        {
+            return null;
+        }
+
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && ip.IsIPv6Multicast)
+        {
+            return null;
+        }
+
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var b0 = ip.GetAddressBytes()[0];
+            if (b0 >= 224) // 224.0.0.0/4 (multicast) and 240.0.0.0/4 (reserved/broadcast)
+            {
+                return null;
+            }
+        }
+
+        return ip.ToString();
+    }
+
+    private static bool IsPrivateIp(System.Net.IPAddress ip)
+    {
+        if (ip == null) return false;
+        var unmapped = ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip;
+        if (System.Net.IPAddress.IsLoopback(unmapped))
+        {
+            return true;
+        }
+
+        if (unmapped.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var bytes = unmapped.GetAddressBytes();
+            // 10.0.0.0/8
+            if (bytes[0] == 10) return true;
+            // 172.16.0.0/12
+            if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) return true;
+            // 192.168.0.0/16
+            if (bytes[0] == 192 && bytes[1] == 168) return true;
+            // 169.254.0.0/16 (link-local)
+            if (bytes[0] == 169 && bytes[1] == 254) return true;
+            return false;
+        }
+
+        if (unmapped.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+        {
+            // Built-in .NET 6+ properties:
+            // IsIPv6LinkLocal: fe80::/10 (RFC 4291)
+            // IsIPv6UniqueLocal: fc00::/7 (RFC 4193 ULA)
+            // IsIPv6SiteLocal: fec0::/10 (RFC 3879 deprecated site-local)
+            return unmapped.IsIPv6LinkLocal || unmapped.IsIPv6UniqueLocal || unmapped.IsIPv6SiteLocal;
+        }
+
+        return false;
     }
 
     // Reads required session policy claims from the KDNX identity token.

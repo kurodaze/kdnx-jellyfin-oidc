@@ -54,6 +54,12 @@ static class Program
         return r;
     }
 
+    static string ResolveRemoteEndPoint(System.Net.IPAddress ip, Microsoft.AspNetCore.Http.IHeaderDictionary headers)
+    {
+        var m = Ctl.GetMethod("ResolveClientRemoteEndPoint", BindingFlags.NonPublic | BindingFlags.Static);
+        return (string)m.Invoke(null, new object[] { ip, headers });
+    }
+
     static int Main()
     {
         Console.WriteLine("== TryGetSessionClaims: real KDNX ID token shape ==");
@@ -297,6 +303,156 @@ static class Program
             Check(cache.Count <= SsoFlowCache.MaxEntries,
                 $"{flood} unauthenticated inserts compact to <= {SsoFlowCache.MaxEntries}", cache.Count);
             cache.Dispose();
+        }
+
+        Console.WriteLine("== SSOController.ResolveClientRemoteEndPoint: Client IP extraction ==");
+        {
+            var publicIp = System.Net.IPAddress.Parse("203.0.113.195");
+            var v4Mapped = System.Net.IPAddress.Parse("::ffff:203.0.113.195");
+            var lanProxy = System.Net.IPAddress.Parse("10.0.0.2");
+            var loopback = System.Net.IPAddress.Parse("127.0.0.1");
+            const string clientIp = "198.51.100.42";
+
+            // 1. Direct public IP connection without headers
+            Check(ResolveRemoteEndPoint(publicIp, null) == "203.0.113.195",
+                "direct public IP without headers returns public IP");
+
+            // 2. IPv4-mapped IPv6 public IP normalized
+            Check(ResolveRemoteEndPoint(v4Mapped, null) == "203.0.113.195",
+                "IPv4-mapped IPv6 unmapped to clean IPv4 string");
+
+            // 3. Known/local proxy IP with X-Forwarded-For unwrapped
+            var headersXff = new Microsoft.AspNetCore.Http.HeaderDictionary
+            {
+                { "X-Forwarded-For", $"{clientIp}, 10.0.0.2" }
+            };
+            Check(ResolveRemoteEndPoint(lanProxy, headersXff) == clientIp,
+                "proxy connection with X-Forwarded-For unwraps client IP");
+
+            // 4. Local proxy with X-Real-IP
+            var headersRealIp = new Microsoft.AspNetCore.Http.HeaderDictionary
+            {
+                { "X-Real-IP", clientIp }
+            };
+            Check(ResolveRemoteEndPoint(lanProxy, headersRealIp) == clientIp,
+                "proxy connection with X-Real-IP unwraps client IP");
+
+            // 5. Local proxy with X-KDNX-Client-IP
+            var headersKdnxIp = new Microsoft.AspNetCore.Http.HeaderDictionary
+            {
+                { "X-KDNX-Client-IP", clientIp }
+            };
+            Check(ResolveRemoteEndPoint(lanProxy, headersKdnxIp) == clientIp,
+                "proxy connection with X-KDNX-Client-IP unwraps client IP");
+
+            // 6. Direct LAN client without proxy headers
+            var lanClient = System.Net.IPAddress.Parse("192.168.1.100");
+            Check(ResolveRemoteEndPoint(lanClient, new Microsoft.AspNetCore.Http.HeaderDictionary()) == "192.168.1.100",
+                "direct LAN client without proxy headers preserves LAN IP");
+
+            // 7. Loopback with forwarded header
+            Check(ResolveRemoteEndPoint(loopback, headersXff) == clientIp,
+                "loopback connection with X-Forwarded-For extracts client IP");
+
+            // 8. Forwarded IP with port stripped
+            var headersWithPort = new Microsoft.AspNetCore.Http.HeaderDictionary
+            {
+                { "X-Forwarded-For", $"{clientIp}:8443, 10.0.0.2" }
+            };
+            Check(ResolveRemoteEndPoint(lanProxy, headersWithPort) == clientIp,
+                "forwarded IP with port strips port cleanly");
+
+            // 9. IPv6 forwarded IP with brackets and port
+            var headersIpv6Port = new Microsoft.AspNetCore.Http.HeaderDictionary
+            {
+                { "X-Forwarded-For", "[2001:db8::1]:443" }
+            };
+            Check(ResolveRemoteEndPoint(lanProxy, headersIpv6Port) == "2001:db8::1",
+                "IPv6 with brackets and port strips port cleanly");
+
+            // 10. IPv6 bracketed candidate WITHOUT port
+            var headersIpv6BracketedNoPort = new Microsoft.AspNetCore.Http.HeaderDictionary
+            {
+                { "X-Forwarded-For", "[2001:db8::1]" }
+            };
+            Check(ResolveRemoteEndPoint(lanProxy, headersIpv6BracketedNoPort) == "2001:db8::1",
+                "IPv6 with brackets without port unwraps clean IPv6");
+
+            // 11. IPv6 quoted with port (RFC 7239 style)
+            var headersIpv6Quoted = new Microsoft.AspNetCore.Http.HeaderDictionary
+            {
+                { "X-Forwarded-For", "\"[2001:db8::1]:8443\"" }
+            };
+            Check(ResolveRemoteEndPoint(lanProxy, headersIpv6Quoted) == "2001:db8::1",
+                "IPv6 quoted with port unquotes and strips port cleanly");
+
+            // 12. Direct public IPv6 connection without headers
+            var publicIpv6 = System.Net.IPAddress.Parse("2001:db8::cafe");
+            Check(ResolveRemoteEndPoint(publicIpv6, null) == "2001:db8::cafe",
+                "direct public IPv6 connection without headers returns public IPv6");
+
+            // 13. IPv6 ULA local proxy unwraps public IPv6
+            var ulaProxy = System.Net.IPAddress.Parse("fd00::1");
+            var headersIpv6Client = new Microsoft.AspNetCore.Http.HeaderDictionary
+            {
+                { "X-Forwarded-For", "2001:db8::cafe, fd00::1" }
+            };
+            Check(ResolveRemoteEndPoint(ulaProxy, headersIpv6Client) == "2001:db8::cafe",
+                "IPv6 ULA proxy unwraps public IPv6 client");
+
+            // 14. IPv6 Link-Local proxy unwraps public IPv6
+            var linkLocalProxy = System.Net.IPAddress.Parse("fe80::1");
+            Check(ResolveRemoteEndPoint(linkLocalProxy, headersIpv6Client) == "2001:db8::cafe",
+                "IPv6 link-local proxy unwraps public IPv6 client");
+
+            // 15. IPv6 ULA client direct without headers
+            var ulaClient = System.Net.IPAddress.Parse("fd00::100");
+            Check(ResolveRemoteEndPoint(ulaClient, new Microsoft.AspNetCore.Http.HeaderDictionary()) == "fd00::100",
+                "direct IPv6 ULA client without headers preserves ULA IP");
+
+            // 16. Unspecified IPv6 (::) rejected
+            var headersUnspecifiedV6 = new Microsoft.AspNetCore.Http.HeaderDictionary
+            {
+                { "X-Forwarded-For", "::" }
+            };
+            Check(ResolveRemoteEndPoint(lanProxy, headersUnspecifiedV6) == "10.0.0.2",
+                "unspecified IPv6 (::) header is rejected and falls back to connection IP");
+
+            // 17. Multicast IPv6 (ff02::1) rejected
+            var headersMulticastV6 = new Microsoft.AspNetCore.Http.HeaderDictionary
+            {
+                { "X-Forwarded-For", "ff02::1" }
+            };
+            Check(ResolveRemoteEndPoint(lanProxy, headersMulticastV6) == "10.0.0.2",
+                "multicast IPv6 header is rejected and falls back to connection IP");
+
+            // 18. Unspecified IPv4 (0.0.0.0) rejected
+            var headersUnspecifiedV4 = new Microsoft.AspNetCore.Http.HeaderDictionary
+            {
+                { "X-Forwarded-For", "0.0.0.0" }
+            };
+            Check(ResolveRemoteEndPoint(lanProxy, headersUnspecifiedV4) == "10.0.0.2",
+                "unspecified IPv4 (0.0.0.0) header is rejected and falls back to connection IP");
+
+            // 19. Multicast IPv4 (224.0.0.1) rejected
+            var headersMulticastV4 = new Microsoft.AspNetCore.Http.HeaderDictionary
+            {
+                { "X-Forwarded-For", "224.0.0.1" }
+            };
+            Check(ResolveRemoteEndPoint(lanProxy, headersMulticastV4) == "10.0.0.2",
+                "multicast IPv4 header is rejected and falls back to connection IP");
+
+            // 20. Malformed or script injection header rejected
+            var headersJunk = new Microsoft.AspNetCore.Http.HeaderDictionary
+            {
+                { "X-Forwarded-For", "<script>alert(1)</script>" }
+            };
+            Check(ResolveRemoteEndPoint(lanProxy, headersJunk) == "10.0.0.2",
+                "malformed header is rejected and falls back to connection IP");
+
+            // 21. Null connection and null headers
+            Check(ResolveRemoteEndPoint(null, null) == "",
+                "null connection and headers returns empty string");
         }
 
         Console.WriteLine();
