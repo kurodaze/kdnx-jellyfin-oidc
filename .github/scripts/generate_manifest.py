@@ -64,8 +64,10 @@ def main():
         # Try to read the build.yaml from the specific tag using git locally
         tag_build_yaml_text = None
         try:
+            # A full ref, not `--`: after `--` git reads `tag:build.yaml` as a path and
+            # prints nothing, so every release fell back to HEAD's version and ABI.
             tag_build_yaml_text = subprocess.check_output(
-                ['git', 'show', '--', f'{tag_name}:build.yaml'], 
+                ['git', 'show', f'refs/tags/{tag_name}:build.yaml'], 
                 stderr=subprocess.DEVNULL
             ).decode('utf-8')
         except subprocess.CalledProcessError:

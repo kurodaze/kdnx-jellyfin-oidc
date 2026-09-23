@@ -4,12 +4,14 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Mime;
 using System.Security.Cryptography;
+using System.Threading;
 using System.Threading.Tasks;
 using Duende.IdentityModel.OidcClient;
 using Jellyfin.Database.Implementations.Entities;
 
 using Kdnx.Jellyfin.Oidc.Config;
 
+using MediaBrowser.Common.Extensions;
 using MediaBrowser.Controller.Authentication;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
@@ -33,6 +35,10 @@ public class SSOController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly SsoFlowCache _memoryCache;
     private static readonly string _assemblyVersion = typeof(SSOController).Assembly.GetName().Version?.ToString() ?? "0.0.0.0";
+
+    // One account lookup at a time: the sub → user mappings are a plain List in the
+    // plugin config, and two first logins for one sub would each create a user.
+    private static readonly SemaphoreSlim _userLock = new(1, 1);
 
     public SSOController(
         ILogger<SSOController> logger,
@@ -208,8 +214,7 @@ public class SSOController : ControllerBase
     [Produces(MediaTypeNames.Application.Json)]
     public async Task<ActionResult> OidAuth(string provider, [FromBody] AuthResponse response)
     {
-        OidConfig config = KdnxOidcPlugin.Instance.Configuration.OidConfigs.FirstOrDefault(x => string.Equals(x.ProviderName, provider, StringComparison.OrdinalIgnoreCase));
-        if (config == null || !config.Enabled)
+        if (FindProvider(provider) == null)
         {
             return BadRequest("No matching provider found or provider disabled");
         }
@@ -225,7 +230,17 @@ public class SSOController : ControllerBase
             {
                 if (timedState.Valid)
                 {
-                    Guid userId = await GetOrCreateUser(timedState.Username, timedState.SubClaim).ConfigureAwait(false);
+                    Guid userId;
+                    await _userLock.WaitAsync().ConfigureAwait(false);
+                    try
+                    {
+                        userId = await GetOrCreateUser(timedState.Username, timedState.SubClaim).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _userLock.Release();
+                    }
+
                     var authenticationResult = await Authenticate(userId, response).ConfigureAwait(false);
                     SsoSessionRegistry.Register(authenticationResult.AccessToken, timedState.SessionExpiresAtUnix);
 
@@ -334,138 +349,12 @@ public class SSOController : ControllerBase
             AppVersion = authResponse.AppVersion,
             DeviceId = authResponse.DeviceID,
             DeviceName = authResponse.DeviceName,
-            RemoteEndPoint = ResolveClientRemoteEndPoint(HttpContext?.Connection?.RemoteIpAddress, Request?.Headers)
+            // As Jellyfin's own logins record it: forwarding headers count only from
+            // Dashboard -> Networking -> Known proxies (the KDNX connector's address).
+            RemoteEndPoint = HttpContext.GetNormalizedRemoteIP().ToString()
         };
 
         return await _sessionManager.AuthenticateDirect(authRequest).ConfigureAwait(false);
-    }
-
-    internal static string ResolveClientRemoteEndPoint(
-        System.Net.IPAddress connectionRemoteIp,
-        IHeaderDictionary headers)
-    {
-        string ipStr = null;
-        if (connectionRemoteIp != null)
-        {
-            var ip = connectionRemoteIp.IsIPv4MappedToIPv6
-                ? connectionRemoteIp.MapToIPv4()
-                : connectionRemoteIp;
-            ipStr = ip.ToString();
-        }
-
-        if ((string.IsNullOrEmpty(ipStr) || IsPrivateIp(connectionRemoteIp)) && headers != null)
-        {
-            string[] proxyHeaders = ["X-Forwarded-For", "X-Real-IP", "X-KDNX-Client-IP"];
-            foreach (var name in proxyHeaders)
-            {
-                if (headers.TryGetValue(name, out var val) && !string.IsNullOrWhiteSpace(val))
-                {
-                    var candidate = NormalizeIpCandidate(val.ToString().Split(',')[0]);
-                    if (!string.IsNullOrEmpty(candidate))
-                    {
-                        return candidate;
-                    }
-                }
-            }
-        }
-
-        return ipStr ?? string.Empty;
-    }
-
-    private static string NormalizeIpCandidate(string candidate)
-    {
-        if (string.IsNullOrWhiteSpace(candidate))
-        {
-            return null;
-        }
-
-        var trimmed = candidate.Trim().Trim('"');
-
-        System.Net.IPAddress ip = null;
-
-        // 1. Raw IP string (e.g. 198.51.100.42 or 2001:db8::1)
-        if (!System.Net.IPAddress.TryParse(trimmed, out ip))
-        {
-            // 2. Bracketed IPv6 without port (e.g. [2001:db8::1])
-            if (trimmed.StartsWith('[') && trimmed.EndsWith(']'))
-            {
-                var unbracketed = trimmed[1..^1];
-                _ = System.Net.IPAddress.TryParse(unbracketed, out ip);
-            }
-            // 3. Endpoint with port (e.g. 198.51.100.42:8443 or [2001:db8::1]:443)
-            else if (System.Net.IPEndPoint.TryParse(trimmed, out var ep))
-            {
-                ip = ep.Address;
-            }
-        }
-
-        if (ip == null)
-        {
-            return null;
-        }
-
-        // Normalize IPv4-mapped IPv6 (::ffff:x.x.x.x -> x.x.x.x)
-        if (ip.IsIPv4MappedToIPv6)
-        {
-            ip = ip.MapToIPv4();
-        }
-
-        // Reject unspecified (0.0.0.0, ::) or multicast addresses
-        if (ip.Equals(System.Net.IPAddress.Any) || ip.Equals(System.Net.IPAddress.IPv6Any))
-        {
-            return null;
-        }
-
-        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && ip.IsIPv6Multicast)
-        {
-            return null;
-        }
-
-        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-        {
-            var b0 = ip.GetAddressBytes()[0];
-            if (b0 >= 224) // 224.0.0.0/4 (multicast) and 240.0.0.0/4 (reserved/broadcast)
-            {
-                return null;
-            }
-        }
-
-        return ip.ToString();
-    }
-
-    private static bool IsPrivateIp(System.Net.IPAddress ip)
-    {
-        if (ip == null) return false;
-        var unmapped = ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip;
-        if (System.Net.IPAddress.IsLoopback(unmapped))
-        {
-            return true;
-        }
-
-        if (unmapped.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-        {
-            var bytes = unmapped.GetAddressBytes();
-            // 10.0.0.0/8
-            if (bytes[0] == 10) return true;
-            // 172.16.0.0/12
-            if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) return true;
-            // 192.168.0.0/16
-            if (bytes[0] == 192 && bytes[1] == 168) return true;
-            // 169.254.0.0/16 (link-local)
-            if (bytes[0] == 169 && bytes[1] == 254) return true;
-            return false;
-        }
-
-        if (unmapped.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
-        {
-            // Built-in .NET 6+ properties:
-            // IsIPv6LinkLocal: fe80::/10 (RFC 4291)
-            // IsIPv6UniqueLocal: fc00::/7 (RFC 4193 ULA)
-            // IsIPv6SiteLocal: fec0::/10 (RFC 3879 deprecated site-local)
-            return unmapped.IsIPv6LinkLocal || unmapped.IsIPv6UniqueLocal || unmapped.IsIPv6SiteLocal;
-        }
-
-        return false;
     }
 
     // Reads required session policy claims from the KDNX identity token.
@@ -507,12 +396,16 @@ public class SSOController : ControllerBase
         }
     }
 
+    private static OidConfig FindProvider(string provider) =>
+        KdnxOidcPlugin.Instance.Configuration.OidConfigs.FirstOrDefault(
+            x => x.Enabled && string.Equals(x.ProviderName, provider, StringComparison.OrdinalIgnoreCase));
+
     private ActionResult GetOidcClient(string provider, out OidConfig config, out OidcClient oidcClient)
     {
-        config = KdnxOidcPlugin.Instance.Configuration.OidConfigs.FirstOrDefault(x => string.Equals(x.ProviderName, provider, StringComparison.OrdinalIgnoreCase));
+        config = FindProvider(provider);
         oidcClient = null;
 
-        if (config == null || !config.Enabled)
+        if (config == null)
         {
             return BadRequest("No matching provider found or provider disabled");
         }
@@ -531,9 +424,11 @@ public class SSOController : ControllerBase
             return ReturnError(StatusCodes.Status500InternalServerError, redirectError);
         }
 
-        // Keyed on the configured name, not the route: provider matching is
-        // case-insensitive, so the route casing would yield one entry per variant.
-        var cacheKey = $"oidcclient_{config.ProviderName}";
+        // Keyed on the configured values, not the route: provider matching is
+        // case-insensitive, so route casing would yield one entry per variant. The
+        // endpoint and client id are in the key because logins keep the sliding
+        // expiry alive, so an edited provider would otherwise never take effect.
+        var cacheKey = $"oidcclient_{config.ProviderName}|{config.OidEndpoint}|{config.OidClientId}";
         var capturedConfig = config;
         oidcClient = _memoryCache.GetOrCreate(cacheKey, entry =>
         {

@@ -26,6 +26,8 @@ public static class SsoSessionRegistry
 
     /// <summary>
     /// Initializes persistent storage in the specified folder and reloads active sessions.
+    /// Throws on an unreadable file, so the caller can log that those sessions are lost;
+    /// storage stays set, so new sessions still persist.
     /// </summary>
     public static void Initialize(string dataFolderPath)
     {
@@ -36,33 +38,23 @@ public static class SsoSessionRegistry
 
         lock (FileLock)
         {
-            try
-            {
-                Directory.CreateDirectory(dataFolderPath);
-                _storageFilePath = Path.Combine(dataFolderPath, "sso-sessions.json");
+            Directory.CreateDirectory(dataFolderPath);
+            _storageFilePath = Path.Combine(dataFolderPath, "sso-sessions.json");
 
-                if (File.Exists(_storageFilePath))
+            if (File.Exists(_storageFilePath))
+            {
+                var json = File.ReadAllText(_storageFilePath);
+                if (!string.IsNullOrWhiteSpace(json))
                 {
-                    var json = File.ReadAllText(_storageFilePath);
-                    if (!string.IsNullOrWhiteSpace(json))
+                    var loaded = JsonSerializer.Deserialize<Dictionary<string, long>>(json);
+                    foreach (var (token, expiresAt) in loaded ?? [])
                     {
-                        var loaded = JsonSerializer.Deserialize<Dictionary<string, long>>(json);
-                        if (loaded != null)
+                        if (!string.IsNullOrEmpty(token) && expiresAt > 0)
                         {
-                            foreach (var (token, expiresAt) in loaded)
-                            {
-                                if (!string.IsNullOrEmpty(token) && expiresAt > 0)
-                                {
-                                    Sessions[token] = expiresAt;
-                                }
-                            }
+                            Sessions[token] = expiresAt;
                         }
                     }
                 }
-            }
-            catch
-            {
-                // Fall back gracefully to in-memory state on disk I/O failure.
             }
         }
     }
@@ -76,19 +68,6 @@ public static class SsoSessionRegistry
 
         Sessions[accessToken] = expiresAtUnix;
         SaveToFile();
-    }
-
-    public static void Remove(string accessToken)
-    {
-        if (string.IsNullOrEmpty(accessToken))
-        {
-            return;
-        }
-
-        if (Sessions.TryRemove(accessToken, out _))
-        {
-            SaveToFile();
-        }
     }
 
     public static void RemoveRange(IEnumerable<string> accessTokens)

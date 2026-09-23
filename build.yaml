@@ -1,7 +1,7 @@
 name: "KDNX OIDC"
 guid: "241e75a6-d3d4-4345-8bae-a53c8a2034c1"
 imageUrl: ""
-version: "1.2.2.0"
+version: "1.2.3.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 owner: "KuroDaze"
@@ -14,6 +14,7 @@ artifacts:
   - "Duende.IdentityModel.OidcClient.dll"
   - "Duende.IdentityModel.dll"
 changelog: |
+  1.2.3.0: Serialize account lookup so concurrent first logins cannot create duplicate users or corrupt the sub mapping list; apply edited provider settings without waiting for the cached OIDC client to expire; log an unreadable session registry instead of silently dropping its sessions; record the client IP through Jellyfin's own Known Proxies handling instead of trusting forwarding headers from any private address; run the session watchdog as a BackgroundService; fix the release manifest labelling every past release with the latest version and Jellyfin ABI.
   1.2.2.0: Populate RemoteEndPoint on AuthenticationRequest from connection and proxy headers so Jellyfin activity logs and session records display the client IP address instead of blank.
   1.2.1.0: Persist SSO session registry to disk (`sso-sessions.json`); restore active sessions across Jellyfin restarts and immediately revoke sessions that expired while offline.
   1.2.0.0: Strict Jellyfin 12.0 compatibility: retarget to net10.0, bump targetAbi to 12.0.0.0, upgrade Jellyfin dependencies to 12.0.0, support case-insensitive username normalization, and report 12.0.0 client in web callback.

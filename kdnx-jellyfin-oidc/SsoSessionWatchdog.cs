@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Session;
@@ -9,15 +8,13 @@ using Microsoft.Extensions.Logging;
 namespace Kdnx.Jellyfin.Oidc;
 
 /// <summary>
-/// Periodically revokes Jellyfin sessions whose KDNX OIDC absolute session max age has elapsed.
-/// Uses <see cref="ISessionManager.Logout(string)"/> with the access token string.
+/// Once a minute, revokes Jellyfin sessions whose KDNX OIDC absolute session max age has
+/// elapsed. Uses <see cref="ISessionManager.Logout(string)"/> with the access token string.
 /// </summary>
-public sealed class SsoSessionWatchdog : IHostedService, IDisposable
+public sealed class SsoSessionWatchdog : BackgroundService
 {
     private readonly ISessionManager _sessionManager;
     private readonly ILogger<SsoSessionWatchdog> _logger;
-    private Timer _timer;
-    private int _tickRunning;
 
     public SsoSessionWatchdog(ISessionManager sessionManager, ILogger<SsoSessionWatchdog> logger)
     {
@@ -26,7 +23,7 @@ public sealed class SsoSessionWatchdog : IHostedService, IDisposable
     }
 
     /// <inheritdoc />
-    public async Task StartAsync(CancellationToken cancellationToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
         {
@@ -41,56 +38,35 @@ public sealed class SsoSessionWatchdog : IHostedService, IDisposable
                         SsoSessionRegistry.Count);
                 }
             }
-
-            // Immediately purge and logout any sessions that expired while offline
-            await RunTickAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to initialize persistent SSO session registry");
+            // Sessions in an unreadable file are no longer tracked, so they will not be revoked.
+            _logger.LogWarning(ex, "Failed to load persistent SSO session registry");
         }
 
-        _timer = new Timer(OnTick, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
-    }
-
-    /// <inheritdoc />
-    public Task StopAsync(CancellationToken cancellationToken)
-    {
-        _timer?.Change(Timeout.Infinite, 0);
-        return Task.CompletedTask;
-    }
-
-    /// <inheritdoc />
-    public void Dispose()
-    {
-        _timer?.Dispose();
-    }
-
-    private void OnTick(object state)
-    {
-        // Prevent overlapping ticks if Logout is slow.
-        if (Interlocked.Exchange(ref _tickRunning, 1) == 1)
+        // The first pass revokes sessions that expired while the server was down. One loop,
+        // so a slow Logout never overlaps the next pass. Nothing may escape: an unhandled
+        // exception from a hosted service stops the Jellyfin host.
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+        do
         {
-            return;
+            await RevokeExpiredAsync().ConfigureAwait(false);
         }
-
-        _ = RunTickAsync();
+        while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
     }
 
-    private async Task RunTickAsync()
+    private async Task RevokeExpiredAsync()
     {
         try
         {
-            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            var expired = SsoSessionRegistry.CollectExpired(now);
+            var expired = SsoSessionRegistry.CollectExpired(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
             if (expired.Count == 0)
             {
                 return;
             }
 
             var revoked = 0;
-            var tokensToRemove = new List<string>(expired.Count);
-
             foreach (var accessToken in expired)
             {
                 try
@@ -102,28 +78,19 @@ public sealed class SsoSessionWatchdog : IHostedService, IDisposable
                 {
                     _logger.LogDebug(ex, "Failed to logout expired SSO access token");
                 }
-                finally
-                {
-                    tokensToRemove.Add(accessToken);
-                }
             }
 
-            SsoSessionRegistry.RemoveRange(tokensToRemove);
+            // Dropped either way: a token Jellyfin no longer knows is already logged out.
+            SsoSessionRegistry.RemoveRange(expired);
 
             if (revoked > 0)
             {
-                _logger.LogInformation(
-                    "Revoked {Count} KDNX OIDC session(s) past session_max_age",
-                    revoked);
+                _logger.LogInformation("Revoked {Count} KDNX OIDC session(s) past session_max_age", revoked);
             }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "SSO session watchdog tick failed");
-        }
-        finally
-        {
-            Interlocked.Exchange(ref _tickRunning, 0);
         }
     }
 }
