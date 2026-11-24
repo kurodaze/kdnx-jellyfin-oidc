@@ -29,17 +29,17 @@
   margin-bottom: 1em;
 }
 
-.emby-button.raised {
+#sso-config-page .emby-button.raised {
   transition: transform 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease !important;
 }
 
-.emby-button.raised:hover {
+#sso-config-page .emby-button.raised:hover {
   transform: translateY(-2px);
   filter: brightness(1.15);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
 }
 
-.emby-button.raised:active {
+#sso-config-page .emby-button.raised:active {
   transform: translateY(0);
 }
 

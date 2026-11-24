@@ -1,16 +1,17 @@
 using System;
+using System.Buffers.Text;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Mime;
 using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Duende.IdentityModel.OidcClient;
 using Jellyfin.Database.Implementations.Entities;
-
 using Kdnx.Jellyfin.Oidc.Config;
-
 using MediaBrowser.Common.Extensions;
 using MediaBrowser.Controller.Authentication;
 using MediaBrowser.Controller.Library;
@@ -27,6 +28,9 @@ namespace Kdnx.Jellyfin.Oidc.Api;
 [Route("[controller]")]
 public class SSOController : ControllerBase
 {
+    private const string StateCookieName = "__Host-OidcState";
+    private const int MaxClientMetaLength = 256;
+
     private readonly IUserManager _userManager;
     private readonly ISessionManager _sessionManager;
     private readonly ILogger<SSOController> _logger;
@@ -39,6 +43,11 @@ public class SSOController : ControllerBase
     // One account lookup at a time: the sub → user mappings are a plain List in the
     // plugin config, and two first logins for one sub would each create a user.
     private static readonly SemaphoreSlim _userLock = new(1, 1);
+
+    // Kept separate from SsoFlowCache so unauthenticated /OID/start floods cannot
+    // evict OIDC discovery/JWKS and amplify requests into KDNX's auth rate limit.
+    private static readonly object _oidcClientLock = new();
+    private static readonly Dictionary<string, (string CacheKey, OidcClient Client)> _oidcClients = new(StringComparer.OrdinalIgnoreCase);
 
     public SSOController(
         ILogger<SSOController> logger,
@@ -63,7 +72,7 @@ public class SSOController : ControllerBase
         [FromRoute] string provider,
         [FromQuery] string state)
     {
-        var errorResult = GetOidcClient(provider, out _, out var oidcClient);
+        var errorResult = GetOidcClient(provider, out var config, out var oidcClient);
         if (errorResult != null)
         {
             return errorResult;
@@ -74,90 +83,103 @@ public class SSOController : ControllerBase
             return BadRequest("Missing state");
         }
 
-        string cookieName = "__Host-OidcState";
-        if (!Request.Cookies.TryGetValue(cookieName, out var cookieState) || cookieState != state)
+        if (!Request.Cookies.TryGetValue(StateCookieName, out var cookieState)
+            || !FixedTimeEqualsString(cookieState, state))
         {
             return BadRequest("CSRF check failed. Please ensure cookies are enabled and try again.");
         }
 
         // __Host- cookies require Secure + Path=/ on set and delete (MDN cookie prefixes).
-        Response.Cookies.Delete(cookieName, new CookieOptions { Path = "/", Secure = true });
+        Response.Cookies.Delete(StateCookieName, new CookieOptions
+        {
+            Path = "/",
+            Secure = true,
+            HttpOnly = true,
+            SameSite = SameSiteMode.Lax
+        });
 
         // Prefixed: `state` is caller-supplied and must not address another entry.
-        if (!_memoryCache.TryGetValue($"oidcstate_{state}", out TimedAuthorizeState timedState))
+        // Remove and consume atomically before awaiting so concurrent callbacks cannot race.
+        var stateKey = $"oidcstate_{state}";
+        if (!_memoryCache.TryGetValue(stateKey, out PendingAuthorizeState pendingState))
         {
             return BadRequest("Invalid or expired state");
         }
 
-        try
+        _memoryCache.Remove(stateKey);
+        if (!pendingState.TryConsume())
         {
-            var currentState = timedState.State;
-            var result = await oidcClient.ProcessResponseAsync(Request.QueryString.Value, currentState).ConfigureAwait(false);
-
-            if (result.IsError)
-            {
-                _logger.LogWarning("OIDC login error for provider {Provider}: {Error} - {Description}", SanitizeLogInput(provider), SanitizeLogInput(result.Error), SanitizeLogInput(result.ErrorDescription));
-                return ReturnError(StatusCodes.Status400BadRequest, "Authentication failed. Please try again.");
-            }
-
-            var usernameClaim = result.User.FindFirst("preferred_username")
-                             ?? result.User.FindFirst("name")
-                             ?? result.User.FindFirst("sub");
-
-            if (usernameClaim != null)
-            {
-                timedState.Username = usernameClaim.Value;
-                timedState.SubClaim = result.User.FindFirst("sub")?.Value;
-
-                // Require IdP session claims from the identity token (KDNX always issues them).
-                if (!TryGetSessionClaims(result.IdentityToken, out var authTime, out var sessionMaxAge)
-                    || SsoSessionRegistry.ComputeExpiresAt(authTime, sessionMaxAge) is not long expiresAt)
-                {
-                    _logger.LogWarning(
-                        "KDNX OIDC login missing required auth_time/session_max_age claims for {Username}",
-                        SanitizeLogInput(timedState.Username));
-                    return ReturnError(
-                        StatusCodes.Status400BadRequest,
-                        "Identity provider did not return session lifetime claims.");
-                }
-
-                timedState.SessionExpiresAtUnix = expiresAt;
-                timedState.Valid = true;
-                _logger.LogInformation(
-                    "KDNX OIDC session for {Username}: auth_time={AuthTime} session_max_age={MaxAge}s expires_at={Expires}",
-                    SanitizeLogInput(timedState.Username),
-                    authTime,
-                    sessionMaxAge,
-                    timedState.SessionExpiresAtUnix);
-            }
-
-            if (timedState.Valid)
-            {
-                string newToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-                var cacheOptions = new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromMinutes(10)).SetSize(1);
-                _memoryCache.Set($"oidcauth_{newToken}", timedState, cacheOptions);
-
-                // Assigned, not appended: a second CSP header would intersect with this one.
-                string nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(16));
-                Response.Headers.ContentSecurityPolicy = $"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; frame-src 'self'; connect-src 'self'; base-uri 'none';";
-                Response.Headers.XContentTypeOptions = "nosniff";
-                Response.Headers.XFrameOptions = "SAMEORIGIN";
-
-                // Body carries a single-use credential (RFC 6749 5.1).
-                Response.Headers.CacheControl = "no-store";
-
-                return Content(WebResponse.Generator(data: newToken, provider: provider, pathBase: Request.PathBase.ToString(), nonce: nonce), MediaTypeNames.Text.Html);
-            }
-            else
-            {
-                _logger.LogWarning("OpenID login for provider {Provider} is missing a username claim.", SanitizeLogInput(provider));
-                return ReturnError(StatusCodes.Status401Unauthorized, "Error. Missing username claim.");
-            }
+            return BadRequest("Invalid or expired state");
         }
-        finally
+
+        var result = await oidcClient.ProcessResponseAsync(Request.QueryString.Value, pendingState.State).ConfigureAwait(false);
+
+        if (result.IsError)
         {
-            _memoryCache.Remove($"oidcstate_{state}");
+            _logger.LogWarning("OIDC login error for provider {Provider}: {Error} - {Description}", SanitizeLogInput(config.ProviderName), SanitizeLogInput(result.Error), SanitizeLogInput(result.ErrorDescription));
+            return ReturnError(StatusCodes.Status400BadRequest, "Authentication failed. Please try again.");
         }
+
+        var usernameClaim = result.User.FindFirst("preferred_username")
+                         ?? result.User.FindFirst("name")
+                         ?? result.User.FindFirst("sub");
+
+        if (usernameClaim == null || string.IsNullOrWhiteSpace(usernameClaim.Value))
+        {
+            _logger.LogWarning("OpenID login for provider {Provider} is missing a username claim.", SanitizeLogInput(config.ProviderName));
+            return ReturnError(StatusCodes.Status401Unauthorized, "Error. Missing username claim.");
+        }
+
+        var username = usernameClaim.Value;
+        var subClaim = result.User.FindFirst("sub")?.Value;
+
+        // Require IdP session claims from the identity token (KDNX always issues them).
+        if (!TryGetSessionClaims(result.IdentityToken, out var authTime, out var sessionMaxAge)
+            || SsoSessionRegistry.ComputeExpiresAt(authTime, sessionMaxAge) is not long expiresAt)
+        {
+            _logger.LogWarning(
+                "KDNX OIDC login missing required auth_time/session_max_age claims for {Username}",
+                SanitizeLogInput(username));
+            return ReturnError(
+                StatusCodes.Status400BadRequest,
+                "Identity provider did not return session lifetime claims.");
+        }
+
+        if (expiresAt <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+        {
+            _logger.LogWarning(
+                "KDNX OIDC login rejected with already-expired session for {Username}: auth_time={AuthTime} session_max_age={MaxAge}s",
+                SanitizeLogInput(username),
+                authTime,
+                sessionMaxAge);
+            return ReturnError(
+                StatusCodes.Status401Unauthorized,
+                "Identity provider session has already expired. Please sign in again.");
+        }
+
+        _logger.LogInformation(
+            "KDNX OIDC session for {Username}: auth_time={AuthTime} session_max_age={MaxAge}s expires_at={Expires}",
+            SanitizeLogInput(username),
+            authTime,
+            sessionMaxAge,
+            expiresAt);
+
+        string newToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        var cacheOptions = new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromMinutes(10)).SetSize(1);
+        _memoryCache.Set($"oidcauth_{newToken}", new PendingAuth(username, subClaim, expiresAt), cacheOptions);
+
+        // Assigned, not appended: a second CSP header would intersect with this one.
+        string nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(16));
+        Response.Headers.ContentSecurityPolicy = $"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; frame-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none';";
+        Response.Headers.XContentTypeOptions = "nosniff";
+        Response.Headers.XFrameOptions = "DENY";
+        Response.Headers["Referrer-Policy"] = "no-referrer";
+
+        // Body carries a single-use credential (RFC 6749 5.1).
+        Response.Headers.CacheControl = "no-store";
+
+        var canonicalProvider = config.ProviderName.Trim();
+        return Content(WebResponse.Generator(data: newToken, provider: canonicalProvider, pathBase: Request.PathBase.ToString(), nonce: nonce), MediaTypeNames.Text.Html);
     }
 
     [HttpGet("OID/start/{provider}")]
@@ -173,12 +195,22 @@ public class SSOController : ControllerBase
 
         if (state.IsError)
         {
-            _logger.LogWarning("OIDC prepare login error for provider {Provider}: {Error} - {Description}", SanitizeLogInput(provider), SanitizeLogInput(state.Error), SanitizeLogInput(state.ErrorDescription));
+            _logger.LogWarning("OIDC prepare login error for provider {Provider}: {Error} - {Description}", SanitizeLogInput(config.ProviderName), SanitizeLogInput(state.Error), SanitizeLogInput(state.ErrorDescription));
             return ReturnError(StatusCodes.Status400BadRequest, "Unable to start login. Please try again.");
         }
 
-        string cookieName = "__Host-OidcState";
-        Response.Cookies.Append(cookieName, state.State, new CookieOptions
+        if (!Uri.TryCreate(state.StartUrl, UriKind.Absolute, out Uri startUri)
+            || !Uri.TryCreate(config.OidEndpoint?.Trim(), UriKind.Absolute, out Uri authorityUri)
+            || startUri.Scheme != Uri.UriSchemeHttps
+            || startUri.Host != authorityUri.Host
+            || startUri.Port != authorityUri.Port
+            || !string.IsNullOrEmpty(startUri.UserInfo))
+        {
+            _logger.LogWarning("OIDC redirect URL host validation failed for provider {Provider}", SanitizeLogInput(config.ProviderName));
+            return ReturnError(StatusCodes.Status400BadRequest, "Invalid redirect URL generated.");
+        }
+
+        Response.Cookies.Append(StateCookieName, state.State, new CookieOptions
         {
             HttpOnly = true,
             Secure = true,
@@ -190,17 +222,9 @@ public class SSOController : ControllerBase
         var cacheOptions = new MemoryCacheEntryOptions()
             .SetAbsoluteExpiration(TimeSpan.FromMinutes(10))
             .SetSize(1);
-        _memoryCache.Set($"oidcstate_{state.State}", new TimedAuthorizeState(state), cacheOptions);
+        _memoryCache.Set($"oidcstate_{state.State}", new PendingAuthorizeState(state), cacheOptions);
 
-        if (!Uri.TryCreate(state.StartUrl, UriKind.Absolute, out Uri startUri) ||
-            !Uri.TryCreate(config.OidEndpoint, UriKind.Absolute, out Uri authorityUri) ||
-            startUri.Scheme != Uri.UriSchemeHttps ||
-            startUri.Host != authorityUri.Host)
-        {
-            _logger.LogWarning("OIDC redirect URL host validation failed for provider {Provider}", SanitizeLogInput(provider));
-            return ReturnError(StatusCodes.Status400BadRequest, "Invalid redirect URL generated.");
-        }
-
+        Response.Headers.CacheControl = "no-store";
         return Redirect(state.StartUrl);
     }
 
@@ -208,6 +232,21 @@ public class SSOController : ControllerBase
     // ReplaceLineEndings covers CR, LF, CRLF, FF, NEL and the Unicode line and
     // paragraph separators. Vertical tab is not a newline and is left alone.
     private static string SanitizeLogInput(string input) => input?.ReplaceLineEndings(string.Empty);
+
+    private static bool FixedTimeEqualsString(string a, string b)
+    {
+        if (a == null || b == null)
+        {
+            return false;
+        }
+
+        var aBytes = Encoding.UTF8.GetBytes(a);
+        var bBytes = Encoding.UTF8.GetBytes(b);
+        return CryptographicOperations.FixedTimeEquals(aBytes, bBytes);
+    }
+
+    private static bool IsValidClientMeta(string value) =>
+        !string.IsNullOrWhiteSpace(value) && value.Length <= MaxClientMetaLength;
 
     [HttpPost("OID/Auth/{provider}")]
     [Consumes(MediaTypeNames.Application.Json)]
@@ -224,40 +263,49 @@ public class SSOController : ControllerBase
             return BadRequest("Missing authentication data");
         }
 
-        if (_memoryCache.TryGetValue($"oidcauth_{response.Data}", out TimedAuthorizeState timedState))
+        if (!IsValidClientMeta(response.DeviceID)
+            || !IsValidClientMeta(response.DeviceName)
+            || !IsValidClientMeta(response.AppName)
+            || !IsValidClientMeta(response.AppVersion))
         {
-            try
-            {
-                if (timedState.Valid)
-                {
-                    Guid userId;
-                    await _userLock.WaitAsync().ConfigureAwait(false);
-                    try
-                    {
-                        userId = await GetOrCreateUser(timedState.Username, timedState.SubClaim).ConfigureAwait(false);
-                    }
-                    finally
-                    {
-                        _userLock.Release();
-                    }
-
-                    var authenticationResult = await Authenticate(userId, response).ConfigureAwait(false);
-                    SsoSessionRegistry.Register(authenticationResult.AccessToken, timedState.SessionExpiresAtUnix);
-
-                    // Only the fields the callback page reads.
-                    return Ok(new { authenticationResult.User, authenticationResult.AccessToken });
-                }
-            }
-            finally
-            {
-                _memoryCache.Remove($"oidcauth_{response.Data}");
-            }
+            return BadRequest("Missing or invalid client metadata");
         }
 
-        return BadRequest("Invalid or expired authentication data");
+        var authKey = $"oidcauth_{response.Data}";
+        if (!_memoryCache.TryGetValue(authKey, out PendingAuth pending))
+        {
+            return BadRequest("Invalid or expired authentication data");
+        }
+
+        // Remove and consume atomically before awaiting so concurrent POSTs cannot double-mint tokens.
+        _memoryCache.Remove(authKey);
+        if (!pending.TryConsume())
+        {
+            return BadRequest("Invalid or expired authentication data");
+        }
+
+        User user;
+        await _userLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            user = await GetOrCreateUser(pending.Username, pending.SubClaim).ConfigureAwait(false);
+        }
+        finally
+        {
+            _userLock.Release();
+        }
+
+        var authenticationResult = await Authenticate(user, response).ConfigureAwait(false);
+        SsoSessionRegistry.Register(authenticationResult.AccessToken, pending.SessionExpiresAtUnix);
+
+        // Response carries a live Jellyfin bearer token (RFC 6749 5.1).
+        Response.Headers.CacheControl = "no-store";
+
+        // Only the fields the callback page reads.
+        return Ok(new { authenticationResult.User, authenticationResult.AccessToken });
     }
 
-    private async Task<Guid> GetOrCreateUser(string canonicalName, string subClaim)
+    private async Task<User> GetOrCreateUser(string canonicalName, string subClaim)
     {
         var pluginConfig = KdnxOidcPlugin.Instance.Configuration;
         User user = null;
@@ -284,9 +332,7 @@ public class SSOController : ControllerBase
 
         if (user == null)
         {
-            user = _userManager.GetUserByName(canonicalName);
-
-            if (user != null)
+            if (_userManager.GetUserByName(canonicalName) != null)
             {
                 // Username taken by an unrelated account — do not link by name.
                 int counter = 1;
@@ -299,17 +345,13 @@ public class SSOController : ControllerBase
 
                 _logger.LogInformation("Username {OriginalName} is already taken. Generated new username {NewName} for sub {SubClaim}", SanitizeLogInput(canonicalName), SanitizeLogInput(newName), SanitizeLogInput(subClaim));
                 canonicalName = newName;
-                user = null;
             }
 
-            if (user == null)
-            {
-                _logger.LogInformation("OIDC user {CanonicalName} doesn't exist, creating...", SanitizeLogInput(canonicalName));
-                user = await _userManager.CreateUserAsync(canonicalName).ConfigureAwait(false);
-                user.AuthenticationProviderId = GetType().FullName;
-                user.Password = _cryptoProvider.CreatePasswordHash(Convert.ToBase64String(RandomNumberGenerator.GetBytes(64))).ToString();
-                await _userManager.UpdateUserAsync(user).ConfigureAwait(false);
-            }
+            _logger.LogInformation("OIDC user {CanonicalName} doesn't exist, creating...", SanitizeLogInput(canonicalName));
+            user = await _userManager.CreateUserAsync(canonicalName).ConfigureAwait(false);
+            user.AuthenticationProviderId = GetType().FullName;
+            user.Password = _cryptoProvider.CreatePasswordHash(Convert.ToBase64String(RandomNumberGenerator.GetBytes(64))).ToString();
+            await _userManager.UpdateUserAsync(user).ConfigureAwait(false);
 
             // Persist or heal sub → user mapping (covers first login and deleted-user remaps).
             if (!string.IsNullOrEmpty(subClaim))
@@ -334,13 +376,11 @@ public class SSOController : ControllerBase
             }
         }
 
-        return user.Id;
+        return user;
     }
 
-    private async Task<AuthenticationResult> Authenticate(Guid userId, AuthResponse authResponse)
+    private async Task<AuthenticationResult> Authenticate(User user, AuthResponse authResponse)
     {
-        User user = _userManager.GetUserById(userId);
-
         var authRequest = new AuthenticationRequest
         {
             UserId = user.Id,
@@ -375,30 +415,38 @@ public class SSOController : ControllerBase
                 return false;
             }
 
-            var json = System.Text.Encoding.UTF8.GetString(System.Buffers.Text.Base64Url.DecodeFromChars(parts[1]));
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var json = Encoding.UTF8.GetString(Base64Url.DecodeFromChars(parts[1]));
+            using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
-            if (!root.TryGetProperty("auth_time", out var at) || at.ValueKind != System.Text.Json.JsonValueKind.Number || !at.TryGetInt64(out authTime) || authTime <= 0)
+            if (!root.TryGetProperty("auth_time", out var at) || at.ValueKind != JsonValueKind.Number || !at.TryGetInt64(out authTime) || authTime <= 0)
             {
                 return false;
             }
 
-            if (!root.TryGetProperty("session_max_age", out var sma) || sma.ValueKind != System.Text.Json.JsonValueKind.Number || !sma.TryGetInt64(out sessionMaxAge) || sessionMaxAge <= 0)
+            if (!root.TryGetProperty("session_max_age", out var sma) || sma.ValueKind != JsonValueKind.Number || !sma.TryGetInt64(out sessionMaxAge) || sessionMaxAge <= 0)
             {
                 return false;
             }
 
             return true;
         }
-        catch (Exception ex) when (ex is FormatException or System.Text.Json.JsonException or InvalidOperationException or ArgumentException)
+        catch (Exception ex) when (ex is FormatException or JsonException or InvalidOperationException or ArgumentException)
         {
             return false;
         }
     }
 
-    private static OidConfig FindProvider(string provider) =>
-        KdnxOidcPlugin.Instance.Configuration.OidConfigs.FirstOrDefault(
-            x => x.Enabled && string.Equals(x.ProviderName, provider, StringComparison.OrdinalIgnoreCase));
+    private static OidConfig FindProvider(string provider)
+    {
+        var normalized = provider?.Trim();
+        if (string.IsNullOrEmpty(normalized))
+        {
+            return null;
+        }
+
+        return KdnxOidcPlugin.Instance?.Configuration?.OidConfigs?.FirstOrDefault(
+            x => x.Enabled && string.Equals(x.ProviderName?.Trim(), normalized, StringComparison.OrdinalIgnoreCase));
+    }
 
     private ActionResult GetOidcClient(string provider, out OidConfig config, out OidcClient oidcClient)
     {
@@ -424,18 +472,18 @@ public class SSOController : ControllerBase
             return ReturnError(StatusCodes.Status500InternalServerError, redirectError);
         }
 
-        // Keyed on the configured values, not the route: provider matching is
-        // case-insensitive, so route casing would yield one entry per variant. The
-        // endpoint and client id are in the key because logins keep the sliding
-        // expiry alive, so an edited provider would otherwise never take effect.
-        var cacheKey = $"oidcclient_{config.ProviderName}|{config.OidEndpoint}|{config.OidClientId}";
-        var capturedConfig = config;
-        oidcClient = _memoryCache.GetOrCreate(cacheKey, entry =>
+        var providerName = config.ProviderName.Trim();
+        var cacheKey = $"{providerName}|{endpoint}|{config.OidClientId?.Trim()}";
+        lock (_oidcClientLock)
         {
-            entry.SetSlidingExpiration(TimeSpan.FromMinutes(15));
-            entry.SetSize(1);
-            return CreateOidcClient(capturedConfig, redirectUri);
-        });
+            if (!_oidcClients.TryGetValue(providerName, out var cached) || cached.CacheKey != cacheKey)
+            {
+                cached = (cacheKey, CreateOidcClient(config, redirectUri));
+                _oidcClients[providerName] = cached;
+            }
+
+            oidcClient = cached.Client;
+        }
 
         return null;
     }
@@ -479,7 +527,7 @@ public class SSOController : ControllerBase
             return false;
         }
 
-        redirectUri = $"https://{clientId.TrimEnd('.').ToLowerInvariant()}/sso/OID/redirect/{config.ProviderName}";
+        redirectUri = $"https://{clientId.TrimEnd('.').ToLowerInvariant()}/sso/OID/redirect/{providerName}";
         return true;
     }
 
@@ -495,7 +543,10 @@ public class SSOController : ControllerBase
 
     private OidcClient CreateOidcClient(OidConfig config, string redirectUri)
     {
-        // KDNX issues openid + profile only.
+        // KDNX issues openid + profile only, and embeds sub/preferred_username/name
+        // directly in the ID token; LoadProfile = false skips a redundant /userinfo
+        // call, and RefreshDiscoveryDocumentForLogin = false caches discovery/JWKS so
+        // /OID/start makes zero outbound calls and /OID/redirect makes only POST /token.
         var options = new OidcClientOptions
         {
             Authority = config.OidEndpoint?.Trim(),
@@ -503,17 +554,21 @@ public class SSOController : ControllerBase
             RedirectUri = redirectUri,
             Scope = "openid profile",
             LoggerFactory = _loggerFactory,
-            // UserInfo over TLS to KDNX after PKCE code exchange; sub must match ID token claims.
-            LoadProfile = true,
+            LoadProfile = false,
+            RefreshDiscoveryDocumentForLogin = false,
             HttpClientFactory = o =>
             {
                 var client = _httpClientFactory.CreateClient();
-                client.DefaultRequestHeaders.UserAgent.ParseAdd($"kdnx-jellyfin-oidc +{_assemblyVersion} (https://github.com/kdnx-jellyfin-oidc)");
+                client.Timeout = TimeSpan.FromSeconds(15);
+                client.DefaultRequestHeaders.UserAgent.ParseAdd($"kdnx-jellyfin-oidc +{_assemblyVersion} (https://github.com/kurodaze/kdnx-jellyfin-oidc)");
                 return client;
             }
         };
 
-        // Duende's default alg list omits EdDSA, which is all KDNX signs with.
+        // KDNX signs with EdDSA only (discovery advertises ["EdDSA"]).
+        // OidcClient v6 defaults to NoValidationIdentityTokenValidator, relying on direct
+        // backchannel TLS to the token endpoint per OIDC Core §3.1.3.7 (Auth Code + PKCE).
+        options.Policy.ValidSignatureAlgorithms.Clear();
         options.Policy.ValidSignatureAlgorithms.Add("EdDSA");
 
         // Already Duende defaults; pinned so a library change can't relax them.
@@ -538,23 +593,39 @@ public class AuthResponse
     public string Data { get; set; }
 }
 
-/// <summary>An in-flight authorization, from /OID/start until the callback redeems it.</summary>
-public class TimedAuthorizeState
+/// <summary>An in-flight authorization, from /OID/start until /OID/redirect consumes it once.</summary>
+internal sealed class PendingAuthorizeState
 {
-    public TimedAuthorizeState(AuthorizeState state)
+    private int _consumed;
+
+    public PendingAuthorizeState(AuthorizeState state)
     {
         State = state;
-        Valid = false;
     }
 
-    public AuthorizeState State { get; set; }
+    public AuthorizeState State { get; }
 
-    public bool Valid { get; set; }
+    public bool TryConsume() => Interlocked.Exchange(ref _consumed, 1) == 0;
+}
 
-    public string Username { get; set; }
+/// <summary>A completed OIDC login waiting for /OID/Auth to redeem it once.</summary>
+internal sealed class PendingAuth
+{
+    private int _consumed;
+
+    public PendingAuth(string username, string subClaim, long sessionExpiresAtUnix)
+    {
+        Username = username;
+        SubClaim = subClaim;
+        SessionExpiresAtUnix = sessionExpiresAtUnix;
+    }
+
+    public string Username { get; }
+
+    public string SubClaim { get; }
 
     /// <summary>Absolute Unix time when the KDNX OIDC session must re-authenticate.</summary>
-    public long SessionExpiresAtUnix { get; set; }
+    public long SessionExpiresAtUnix { get; }
 
-    public string SubClaim { get; set; }
+    public bool TryConsume() => Interlocked.Exchange(ref _consumed, 1) == 0;
 }

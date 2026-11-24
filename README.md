@@ -32,7 +32,12 @@ In Jellyfin Dashboard -> `Plugins` -> `KDNX OIDC`:
 - Provider name and redirect path are case-sensitive and must match on both ends (`KDNX` with `/sso/OID/redirect/KDNX`).
 
 ### 3. Client IP addresses
-In Jellyfin Dashboard -> `Networking` -> **Known proxies**, add the LAN address of the host running the KDNX connector (e.g. `192.168.1.10`). Jellyfin then takes the client's public IP from KDNX's `X-Forwarded-For` — for SSO logins, activity logs and local/remote network rules alike. Without it, every session shows the connector's address.
+In Jellyfin Dashboard -> `Networking` -> **Known proxies**, add the proxy address Jellyfin sees on incoming connections:
+- **Relay connector** or **IPv4 WireGuard connector (remote LAN host)**: the LAN IP of the host running the KDNX connector (e.g. `192.168.1.10`).
+- **WireGuard connector on the same host as Jellyfin** or **IPv6 WireGuard tunnel**: the KDNX server's WireGuard (`nx0`) IP.
+- **Local (no-connector) resource**: `127.0.0.1` / `::1`.
+
+Jellyfin then takes the client's public IP from KDNX's `X-Forwarded-For` — for SSO logins, activity logs and local/remote network rules alike. Without it, every session shows the connector's address.
 
 ### Session max age (re-authentication)
 

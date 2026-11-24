@@ -16,9 +16,7 @@
             <h2 class="sectionTitle" style="font-size: 1.8em; font-weight: 700; background: linear-gradient(90deg, #fff, #aaa); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">KDNX OIDC Settings</h2>
           </div>
           <p style="margin-bottom: 2em; color: rgba(255, 255, 255, 0.6); font-size: 0.95em; line-height: 1.5;">
-            <i>Note:</i> Making changes to this configuration requires a restart of the Jellyfin server.
-            <br />
-            This is a streamlined, OIDC-only relying party plugin.
+            Streamlined OpenID Connect (OIDC) relying party plugin for KDNX. Changes take effect immediately on save.
           </p>
 
           <form id="sso-new-oidc-provider" class="sso-card">
@@ -82,7 +80,7 @@
             <button
               id="SaveProvider"
               is="emby-button"
-              type="button"
+              type="submit"
               class="raised button-submit block emby-button"
               style="margin-top: 2em;"
             >

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Session;
@@ -30,7 +31,7 @@ public sealed class SsoSessionWatchdog : BackgroundService
             var dataFolder = KdnxOidcPlugin.Instance?.DataFolderPath;
             if (!string.IsNullOrEmpty(dataFolder))
             {
-                SsoSessionRegistry.Initialize(dataFolder);
+                SsoSessionRegistry.Initialize(dataFolder, _logger);
                 if (SsoSessionRegistry.Count > 0)
                 {
                     _logger.LogInformation(
@@ -49,11 +50,18 @@ public sealed class SsoSessionWatchdog : BackgroundService
         // so a slow Logout never overlaps the next pass. Nothing may escape: an unhandled
         // exception from a hosted service stops the Jellyfin host.
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
-        do
+        try
         {
-            await RevokeExpiredAsync().ConfigureAwait(false);
+            do
+            {
+                await RevokeExpiredAsync().ConfigureAwait(false);
+            }
+            while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
         }
-        while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Normal host shutdown.
+        }
     }
 
     private async Task RevokeExpiredAsync()
@@ -66,26 +74,26 @@ public sealed class SsoSessionWatchdog : BackgroundService
                 return;
             }
 
-            var revoked = 0;
+            var completed = new List<string>(expired.Count);
             foreach (var accessToken in expired)
             {
                 try
                 {
+                    // SessionManager.Logout(string) returns cleanly when a token is already gone;
+                    // an exception indicates a transient failure, so keep the token to retry next tick.
                     await _sessionManager.Logout(accessToken).ConfigureAwait(false);
-                    revoked++;
+                    completed.Add(accessToken);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug(ex, "Failed to logout expired SSO access token");
+                    _logger.LogWarning(ex, "Failed to logout expired SSO access token; will retry on next tick");
                 }
             }
 
-            // Dropped either way: a token Jellyfin no longer knows is already logged out.
-            SsoSessionRegistry.RemoveRange(expired);
-
-            if (revoked > 0)
+            if (completed.Count > 0)
             {
-                _logger.LogInformation("Revoked {Count} KDNX OIDC session(s) past session_max_age", revoked);
+                SsoSessionRegistry.RemoveRange(completed);
+                _logger.LogInformation("Revoked {Count} KDNX OIDC session(s) past session_max_age", completed.Count);
             }
         }
         catch (Exception ex)

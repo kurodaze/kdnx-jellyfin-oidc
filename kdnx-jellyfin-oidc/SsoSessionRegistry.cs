@@ -3,7 +3,9 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 
 namespace Kdnx.Jellyfin.Oidc;
 
@@ -17,19 +19,20 @@ public static class SsoSessionRegistry
     private static readonly ConcurrentDictionary<string, long> Sessions = new(StringComparer.Ordinal);
     private static readonly object FileLock = new();
     private static string _storageFilePath;
+    private static ILogger _logger;
 
     /// <summary>Matches KDNX's own clamp on session_max_age.</summary>
-    public static readonly long MinSessionMaxAgeSecs = 3600;
+    public const long MinSessionMaxAgeSecs = 3600;
 
     /// <inheritdoc cref="MinSessionMaxAgeSecs"/>
-    public static readonly long MaxSessionMaxAgeSecs = 90L * 24 * 60 * 60;
+    public const long MaxSessionMaxAgeSecs = 90L * 24 * 60 * 60;
 
     /// <summary>
     /// Initializes persistent storage in the specified folder and reloads active sessions.
     /// Throws on an unreadable file, so the caller can log that those sessions are lost;
     /// storage stays set, so new sessions still persist.
     /// </summary>
-    public static void Initialize(string dataFolderPath)
+    public static void Initialize(string dataFolderPath, ILogger logger = null)
     {
         if (string.IsNullOrWhiteSpace(dataFolderPath))
         {
@@ -38,6 +41,7 @@ public static class SsoSessionRegistry
 
         lock (FileLock)
         {
+            _logger = logger;
             Directory.CreateDirectory(dataFolderPath);
             _storageFilePath = Path.Combine(dataFolderPath, "sso-sessions.json");
 
@@ -109,6 +113,11 @@ public static class SsoSessionRegistry
         }
 
         sessionMaxAgeSecs = Math.Clamp(sessionMaxAgeSecs, MinSessionMaxAgeSecs, MaxSessionMaxAgeSecs);
+        if (authTimeUnix > long.MaxValue - sessionMaxAgeSecs)
+        {
+            return null;
+        }
+
         return authTimeUnix + sessionMaxAgeSecs;
     }
 
@@ -123,6 +132,7 @@ public static class SsoSessionRegistry
             if (resetStorage)
             {
                 _storageFilePath = null;
+                _logger = null;
             }
         }
     }
@@ -132,23 +142,50 @@ public static class SsoSessionRegistry
 
     private static void SaveToFile()
     {
-        if (string.IsNullOrEmpty(_storageFilePath))
-        {
-            return;
-        }
-
         lock (FileLock)
         {
+            if (string.IsNullOrEmpty(_storageFilePath))
+            {
+                return;
+            }
+
+            string tempFile = $"{_storageFilePath}.{Convert.ToHexString(RandomNumberGenerator.GetBytes(8))}.tmp";
             try
             {
-                var tempFile = _storageFilePath + ".tmp";
-                var json = JsonSerializer.Serialize(Sessions);
-                File.WriteAllText(tempFile, json);
+                var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(Sessions);
+                var options = new FileStreamOptions
+                {
+                    Mode = FileMode.CreateNew,
+                    Access = FileAccess.Write,
+                    Share = FileShare.None
+                };
+                if (!OperatingSystem.IsWindows())
+                {
+                    options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+                }
+
+                using (var stream = new FileStream(tempFile, options))
+                {
+                    stream.Write(jsonBytes);
+                    stream.Flush(flushToDisk: true);
+                }
+
                 File.Move(tempFile, _storageFilePath, overwrite: true);
             }
-            catch
+            catch (Exception ex)
             {
-                // Suppress disk write failures so authentication flow is not interrupted.
+                _logger?.LogWarning(ex, "Failed to persist SSO session registry to {Path}", _storageFilePath);
+                try
+                {
+                    if (File.Exists(tempFile))
+                    {
+                        File.Delete(tempFile);
+                    }
+                }
+                catch
+                {
+                    // Best-effort cleanup of temp file.
+                }
             }
         }
     }

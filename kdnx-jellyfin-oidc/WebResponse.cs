@@ -28,11 +28,11 @@ public static class WebResponse
         pathBase = pathBase.TrimEnd('/');
 
         string jsonPathBase = System.Text.Json.JsonSerializer.Serialize(pathBase);
-        string jsonAuthUrl = System.Text.Json.JsonSerializer.Serialize($"{pathBase}/sso/OID/Auth/{provider}");
+        string jsonAuthUrl = System.Text.Json.JsonSerializer.Serialize($"{pathBase}/sso/OID/Auth/{Uri.EscapeDataString(provider)}");
         string jsonData = System.Text.Json.JsonSerializer.Serialize(data);
 
         return _baseHtml.Value
-            .Replace("\"___jsonPunycodeBaseUrl___\"", jsonPathBase)
+            .Replace("\"___jsonPathBase___\"", jsonPathBase)
             .Replace("\"___jsonData___\"", jsonData)
             .Replace("\"___jsonAuthUrl___\"", jsonAuthUrl)
             .Replace("___nonce___", nonce);

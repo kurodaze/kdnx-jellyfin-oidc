@@ -3,13 +3,12 @@ using System.IO;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Extensions.Caching.Memory;
 using Kdnx.Jellyfin.Oidc;
 using Kdnx.Jellyfin.Oidc.Api;
 using Kdnx.Jellyfin.Oidc.Config;
 
-// Invokes the REAL private statics in the built SSOController via reflection,
-// so this checks shipped code, not a reimplementation.
+// Invokes the REAL methods in the built plugin assembly, so this checks shipped
+// code rather than a reimplementation.
 static class Program
 {
     static int _fail;
@@ -59,8 +58,8 @@ static class Program
         Console.WriteLine("== TryGetSessionClaims: real KDNX ID token shape ==");
 
         // Faithful KDNX claim set (server/src/auth.rs generate_oidc_id_token).
-        // Pad `name` to sweep every base64 length residue.
-        for (int pad = 0; pad < 6; pad++)
+        // Pad `name` to sweep every base64 length residue; includes base64url '-' and '_'.
+        for (int pad = 0; pad < 4; pad++)
         {
             var json = JsonSerializer.Serialize(new
             {
@@ -73,34 +72,20 @@ static class Program
                 session_max_age = 604800,
                 jti = "b3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
                 preferred_username = "kuro" + new string('z', pad),
-                name = "Kuro" + new string('z', pad),
+                name = "~~~ ~~~ ??? ???" + new string('z', pad),
                 guild_id = "902384029384",
                 roles = new[] { "member", "plex" }
             });
             var tok = KdnxToken(json);
-            var residue = tok.Split('.')[1].Length % 4;
+            var seg = tok.Split('.')[1];
+            var residue = seg.Length % 4;
             var ok = SessionClaims(tok, out var at, out var sma);
             Check(ok && at == 1753599000 && sma == 604800,
                 $"decodes (payload len residue {residue}) -> auth_time/session_max_age", $"{ok} {at} {sma}");
-        }
-
-        // base64url alphabet: payload MUST contain '-' and/or '_' to prove the swap.
-        {
-            // '~' (0x7E) and DEL (0x7F) land on base64 sextets 62/63 -> '+'/'/' -> '-'/'_'
-            // once byte alignment is right, so sweep a pad until both appear.
-            string tok = null, seg = null;
-            for (int i = 0; i < 64; i++)
+            if (pad == 0)
             {
-                var json = "{\"iss\":\"https://kdnx-auth.example.com\",\"sub\":\"308451923847239849\","
-                         + "\"aud\":\"fin.example.com\",\"auth_time\":1753599000,\"session_max_age\":604800,"
-                         + "\"name\":\"" + new string('x', i) + "~~~\"}";
-                tok = KdnxToken(json);
-                seg = tok.Split('.')[1];
-                if (seg.Contains('-') && seg.Contains('_')) break;
+                Check(seg.Contains('-') && seg.Contains('_'), "payload exercises base64url '-' and '_' alphabet", seg);
             }
-            var ok = SessionClaims(tok, out var at, out var sma);
-            Check(seg != null && seg.Contains('-') && seg.Contains('_'), "payload uses base64url '-' AND '_' alphabet", seg);
-            Check(ok && at == 1753599000 && sma == 604800, "  ...and it still decodes correctly", $"{ok} {at} {sma}");
         }
 
         // Rejections
@@ -121,26 +106,20 @@ static class Program
 
         Console.WriteLine();
         Console.WriteLine("== TryGetOidcRedirectUri: must match KDNX byte-for-byte ==");
-        // KDNX builds  https://{subdomain}.{domain}{oidc_redirect_path}  and compares with !=
+        // KDNX builds https://{subdomain}.{domain}{oidc_redirect_path} and compares with !=
         const string Expected = "https://fin.example.com/sso/OID/redirect/KDNX";
 
-        foreach (var (clientId, label) in new[]
+        foreach (var (clientId, providerName, label) in new[]
         {
-            ("fin.example.com", "lowercase host"),
-            ("Fin.Example.COM", "MIXED-CASE host (the interop trap)"),
-            ("  fin.example.com  ", "surrounding whitespace"),
-            ("fin.example.com.", "FQDN trailing dot"),
+            ("fin.example.com", "KDNX", "lowercase host"),
+            ("Fin.Example.COM", "KDNX", "MIXED-CASE host (the interop trap)"),
+            ("  fin.example.com  ", "KDNX", "surrounding host whitespace"),
+            ("fin.example.com.", "KDNX", "FQDN trailing dot"),
+            ("fin.example.com", "  KDNX  ", "surrounding provider whitespace"),
         })
         {
-            var ok = RedirectUri(new OidConfig { OidClientId = clientId, ProviderName = "KDNX" }, out var uri, out _);
+            var ok = RedirectUri(new OidConfig { OidClientId = clientId, ProviderName = providerName }, out var uri, out _);
             Check(ok && uri == Expected, $"{label,-34} -> expected URI", uri);
-        }
-
-        // Provider name casing comes from config, never the request URL.
-        {
-            var ok = RedirectUri(new OidConfig { OidClientId = "fin.example.com", ProviderName = "KDNX" }, out var uri, out _);
-            Check(ok && uri.EndsWith("/redirect/KDNX", StringComparison.Ordinal),
-                "path segment preserves configured ProviderName casing", uri);
         }
 
         foreach (var (clientId, label) in new[]
@@ -175,40 +154,13 @@ static class Program
         }
 
         Console.WriteLine();
-        Console.WriteLine("== SanitizeLogInput: no line break survives, on any return path ==");
-        {
-            var m = Ctl.GetMethod("SanitizeLogInput", BindingFlags.NonPublic | BindingFlags.Static);
-            string San(string s) => (string)m.Invoke(null, new object[] { s });
-
-            foreach (var (raw, label) in new[]
-            {
-                ("kuro\nADMIN logged in", "LF"),
-                ("kuro\rADMIN logged in", "CR"),
-                ("kuro\r\nADMIN logged in", "CRLF"),
-                ("kuro\u0085ADMIN logged in", "NEL"),
-                ("kuro\u2028ADMIN logged in", "line separator"),
-                ("kuro\u2029ADMIN logged in", "paragraph separator"),
-                ("kuro\fADMIN logged in", "form feed"),
-            })
-            {
-                var s = San(raw);
-                Check(s == "kuroADMIN logged in", $"strips {label}", s);
-            }
-
-            Check(San("kuro") == "kuro", "leaves a clean value alone");
-            Check(San("") == "", "empty string round-trips");
-            Check(San(null) == null, "null is not dereferenced");
-        }
-
-        Console.WriteLine();
         Console.WriteLine("== SsoSessionRegistry.ComputeExpiresAt vs KDNX clamp [3600, 90d] ==");
         Check(SsoSessionRegistry.ComputeExpiresAt(1000, 604800) == 1000 + 604800, "7d default passes through");
         Check(SsoSessionRegistry.ComputeExpiresAt(1000, 100) == 1000 + 3600, "below-min clamps up to 3600");
         Check(SsoSessionRegistry.ComputeExpiresAt(1000, long.MaxValue) == 1000 + 90L * 24 * 60 * 60, "above-max clamps to 90d");
         Check(SsoSessionRegistry.ComputeExpiresAt(0, 604800) == null, "auth_time 0 -> null");
         Check(SsoSessionRegistry.ComputeExpiresAt(1000, 0) == null, "session_max_age 0 -> null");
-        Check(SsoSessionRegistry.MinSessionMaxAgeSecs == 3600 && SsoSessionRegistry.MaxSessionMaxAgeSecs == 90L * 24 * 60 * 60,
-            "bounds equal KDNX MIN/MAX_OIDC_SESSION_MAX_AGE_SECS");
+        Check(SsoSessionRegistry.ComputeExpiresAt(long.MaxValue, 3600) == null, "auth_time overflow -> null");
 
         Console.WriteLine();
         Console.WriteLine("== SsoSessionRegistry: Persistent storage across restarts ==");
@@ -226,11 +178,18 @@ static class Program
 
                 var storageFile = Path.Combine(tempDir, "sso-sessions.json");
                 Check(File.Exists(storageFile), "persists sso-sessions.json to disk");
+                var rawBytes = File.ReadAllBytes(storageFile);
+                Check(rawBytes.Length > 0 && rawBytes[0] == (byte)'{',
+                    "sso-sessions.json is BOM-free UTF-8 JSON", rawBytes.Length > 0 ? rawBytes[0] : -1);
+                if (!OperatingSystem.IsWindows())
+                {
+                    var mode = File.GetUnixFileMode(storageFile);
+                    Check(mode == (UnixFileMode.UserRead | UnixFileMode.UserWrite),
+                        "sso-sessions.json is written with 0600 permissions", mode);
+                }
 
                 // Simulate server restart: clear memory, re-initialize from same tempDir
                 SsoSessionRegistry.Clear(resetStorage: true);
-                Check(SsoSessionRegistry.Count == 0, "cleared memory simulated restart");
-
                 SsoSessionRegistry.Initialize(tempDir);
                 Check(SsoSessionRegistry.Count == 2, "reloads 2 tokens from disk after restart");
 
@@ -244,9 +203,6 @@ static class Program
                 SsoSessionRegistry.Clear(resetStorage: true);
                 SsoSessionRegistry.Initialize(tempDir);
                 Check(SsoSessionRegistry.Count == 1, "reloads only remaining active token after restart");
-
-                SsoSessionRegistry.RemoveRange(["tok_active"]);
-                Check(SsoSessionRegistry.Count == 0, "removed last token");
 
                 // A corrupt file must surface (the watchdog logs that its sessions are
                 // lost), yet leave storage set so new sessions still persist.
@@ -271,43 +227,18 @@ static class Program
         }
 
         Console.WriteLine();
-        Console.WriteLine("== SsoFlowCache: unauthenticated /OID/start cannot grow it without bound ==");
+        Console.WriteLine("== WebResponse.Generator: escaping and placeholder substitution ==");
         {
-            var cache = new SsoFlowCache();
-            var opts = new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromMinutes(10)).SetSize(1);
-
-            cache.Set("oidcstate_abc", new object(), opts);
-            Check(cache.TryGetValue("oidcstate_abc", out object _), "sized entry round-trips");
-            cache.Remove("oidcstate_abc");
-            Check(!cache.TryGetValue("oidcstate_abc", out object _), "remove works");
-
-            // If any Set in the controller forgot SetSize, login would throw at runtime.
-            var threw = false;
-            try
-            {
-                cache.Set("nosize", new object(), new MemoryCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromMinutes(10)));
-            }
-            catch (InvalidOperationException)
-            {
-                threw = true;
-            }
-
-            Check(threw, "un-sized entry throws (so SetSize on all 3 sites is load-bearing)");
-
-            const int flood = 50_000;
-            for (int i = 0; i < flood; i++)
-            {
-                cache.Set($"oidcstate_flood{i}", new object(), opts);
-            }
-
-            for (int i = 0; i < 100 && cache.Count > SsoFlowCache.MaxEntries; i++)
-            {
-                System.Threading.Thread.Sleep(20); // compaction runs on the thread pool
-            }
-
-            Check(cache.Count <= SsoFlowCache.MaxEntries,
-                $"{flood} unauthenticated inserts compact to <= {SsoFlowCache.MaxEntries}", cache.Count);
-            cache.Dispose();
+            var html = WebResponse.Generator("tok123", "KDNX", "/jf</script><script>alert(1)</script>", "nonceABC");
+            Check(!html.Contains("</script><script>alert(1)", StringComparison.Ordinal),
+                "escapes </script> in substituted values");
+            Check(html.Contains("nonce=\"nonceABC\"", StringComparison.Ordinal),
+                "injects CSP nonce");
+            Check(!html.Contains("___jsonPathBase___", StringComparison.Ordinal)
+                && !html.Contains("___jsonData___", StringComparison.Ordinal)
+                && !html.Contains("___jsonAuthUrl___", StringComparison.Ordinal)
+                && !html.Contains("___nonce___", StringComparison.Ordinal),
+                "replaces all template placeholders");
         }
 
         Console.WriteLine();

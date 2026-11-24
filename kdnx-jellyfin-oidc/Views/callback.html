@@ -19,37 +19,47 @@ function getDeviceNameFromUa() {
     if (/iPad|iPhone|iPod/.test(ua) || (ua.includes('Mac') && navigator.maxTouchPoints > 1)) return 'iOS Device';
     if (ua.indexOf('Android') !== -1) return 'Android Device';
 
-    const match = ua.match(/(Edg|OPR|Chrome|Safari|Firefox)\/?\s*(\d+)/i) || [];
-    const browser = match[1] || 'Web Browser';
-    if (browser === 'Edg') return 'Edge';
-    if (browser === 'OPR') return 'Opera';
-    return browser;
+    // Check Chromium derivatives before Chrome, since their UAs include Chrome/... first.
+    if (/Edg\//i.test(ua)) return 'Edge';
+    if (/OPR\//i.test(ua)) return 'Opera';
+    const match = ua.match(/(Chrome|Safari|Firefox)\/?\s*(\d+)/i) || [];
+    return match[1] || 'Web Browser';
 }
 
 // Official Android (and similar) embeds NativeShell.AppHost.deviceId() but does not
 // write jellyfin-web's localStorage key `_deviceId2`, so seed it from NativeShell.
-function resolveClientMeta() {
-    const host = window.NativeShell && window.NativeShell.AppHost;
+function resolveDeviceId() {
     let deviceId = localStorage.getItem('_deviceId2');
-    if (!deviceId && host && typeof host.deviceId === 'function') {
-        try {
-            deviceId = host.deviceId();
-            if (deviceId) localStorage.setItem('_deviceId2', String(deviceId));
-        } catch (e) { /* ignore */ }
+    if (!deviceId) {
+        const host = window.NativeShell && window.NativeShell.AppHost;
+        if (host && typeof host.deviceId === 'function') {
+            try {
+                deviceId = host.deviceId();
+                if (deviceId) localStorage.setItem('_deviceId2', String(deviceId));
+            } catch (e) { /* ignore */ }
+        }
     }
+    return deviceId;
+}
 
+function resolveAppMeta() {
+    const host = window.NativeShell && window.NativeShell.AppHost;
     let appName = 'Jellyfin Web';
     let appVersion = '12.0.0';
     let deviceName = getDeviceNameFromUa();
     try {
         if (host) {
-            if (typeof host.appName === 'function' && host.appName()) appName = String(host.appName());
-            if (typeof host.appVersion === 'function' && host.appVersion()) appVersion = String(host.appVersion());
-            if (typeof host.deviceName === 'function' && host.deviceName()) deviceName = String(host.deviceName());
+            const read = (fn) => typeof fn === 'function' ? String(fn() || '').trim() : '';
+            const nativeApp = read(host.appName);
+            const nativeVer = read(host.appVersion);
+            const nativeDev = read(host.deviceName);
+            if (nativeApp) appName = nativeApp;
+            if (nativeVer) appVersion = nativeVer;
+            if (nativeDev) deviceName = nativeDev;
         }
     } catch (e) { /* ignore */ }
 
-    return { deviceId, appName, appVersion, deviceName };
+    return { appName, appVersion, deviceName };
 }
 
 function serverIdReady() {
@@ -66,12 +76,20 @@ const sleep = (milliseconds) => new Promise(resolve => setTimeout(resolve, milli
 
 async function main() {
     // Seeds _deviceId2 before jellyfin-web can invent a web id.
-    let meta = resolveClientMeta();
+    let deviceId = resolveDeviceId();
+    const appMeta = resolveAppMeta();
 
     // The wipe forces jellyfin-web to re-bootstrap; keep other servers from going with it.
     const savedCredentials = localStorage.getItem('jellyfin_credentials');
+    const fail = (message) => {
+        if (savedCredentials != null) {
+            localStorage.setItem('jellyfin_credentials', savedCredentials);
+        }
+        document.querySelector('p').textContent = message;
+    };
+
     localStorage.removeItem('jellyfin_credentials');
-    document.getElementById('iframe-main').src = "___jsonPunycodeBaseUrl___" + '/web/index.html';
+    document.getElementById('iframe-main').src = "___jsonPathBase___" + '/web/index.html';
 
     const data = "___jsonData___";
     let attempts = 0;
@@ -79,28 +97,28 @@ async function main() {
     // Wait for server id from the hidden jellyfin-web iframe (shared localStorage).
     // Device id may already be present from NativeShell or from jellyfin-web.
     while (attempts < 150) {
-        meta = resolveClientMeta();
-        if (meta.deviceId && serverIdReady()) break;
+        if (!deviceId) deviceId = resolveDeviceId();
+        if (deviceId && serverIdReady()) break;
         await sleep(100);
         attempts++;
     }
 
-    if (!meta.deviceId || !serverIdReady()) {
-        document.querySelector('p').textContent = 'Login timed out waiting for client data. Please try again.';
+    if (!deviceId || !serverIdReady()) {
+        fail('Login timed out waiting for client data. Please try again.');
         return;
     }
 
     const request = {
-        deviceId: meta.deviceId,
-        appName: meta.appName,
-        appVersion: meta.appVersion,
-        deviceName: meta.deviceName,
+        deviceId,
+        appName: appMeta.appName,
+        appVersion: appMeta.appVersion,
+        deviceName: appMeta.deviceName,
         data
     };
 
     const url = "___jsonAuthUrl___";
 
-    let response;
+    let responseJson;
     try {
         const res = await fetch(url, {
             method: 'POST',
@@ -110,25 +128,29 @@ async function main() {
             },
             body: JSON.stringify(request)
         });
-        response = res.ok ? await res.text() : undefined;
+        responseJson = res.ok ? await res.json() : undefined;
     } catch (e) {
-        response = undefined;
+        responseJson = undefined;
     }
-    if (!response) {
-        document.querySelector('p').textContent = 'Authentication failed. Please close this page and try again.';
+    if (!responseJson || !responseJson['User'] || !responseJson['AccessToken']) {
+        fail('Authentication failed. Please close this page and try again.');
         return;
     }
-    let responseJson;
-    try {
-        responseJson = JSON.parse(response);
-    } catch (e) {
-        document.querySelector('p').textContent = 'Authentication failed. Please close this page and try again.';
-        return;
-    }
-    const userId = 'user-' + responseJson['User']['Id'] + '-' + responseJson['User']['ServerId'];
+
+    const serverId = responseJson['User']['ServerId'];
+    const userId = 'user-' + responseJson['User']['Id'] + '-' + serverId;
     responseJson['User']['EnableAutoLogin'] = true;
     localStorage.setItem(userId, JSON.stringify(responseJson['User']));
-    const jfCreds = JSON.parse(localStorage.getItem('jellyfin_credentials'));
+
+    let jfCreds;
+    try {
+        jfCreds = JSON.parse(localStorage.getItem('jellyfin_credentials'));
+    } catch (e) {
+        jfCreds = null;
+    }
+    if (!jfCreds || !Array.isArray(jfCreds.Servers) || jfCreds.Servers.length === 0) {
+        jfCreds = { Servers: [{ Id: serverId }] };
+    }
 
     // Restore the other servers, then target this one by Id, not index.
     if (savedCredentials) {
@@ -138,18 +160,17 @@ async function main() {
             }
         } catch (e) { /* ignore a malformed previous blob */ }
     }
-    const serverId = responseJson['User']['ServerId'];
     const target = jfCreds['Servers'].find(s => s.Id === serverId) || jfCreds['Servers'][0];
     target['AccessToken'] = responseJson['AccessToken'];
     target['UserId'] = responseJson['User']['Id'];
     // AccessToken in localStorage matches upstream jellyfin-web credential storage.
     localStorage.setItem('jellyfin_credentials', JSON.stringify(jfCreds));
     localStorage.setItem('enableAutoLogin', 'true');
-    window.location.replace("___jsonPunycodeBaseUrl___" + '/web/index.html');
+    window.location.replace("___jsonPathBase___" + '/web/index.html');
 }
 
 document.addEventListener('DOMContentLoaded', function () {
     main();
 });
 
-</script><iframe id='iframe-main' sandbox='allow-same-origin allow-forms allow-scripts' src=''></iframe></body></html>
+</script><iframe id='iframe-main' sandbox='allow-same-origin allow-scripts'></iframe></body></html>

@@ -6,13 +6,15 @@ import urllib.request
 import urllib.error
 import yaml
 
+REQUEST_TIMEOUT_SECS = 30
+
 def fetch_json(url, token=None):
     req = urllib.request.Request(url)
     if token:
         req.add_header('Authorization', f'Bearer {token}')
     req.add_header('Accept', 'application/vnd.github.v3+json')
     try:
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECS) as response:
             return json.loads(response.read().decode())
     except urllib.error.URLError as e:
         print(f"Error fetching {url}: {e}")
@@ -20,7 +22,7 @@ def fetch_json(url, token=None):
 
 def fetch_text(url):
     try:
-        with urllib.request.urlopen(url) as response:
+        with urllib.request.urlopen(url, timeout=REQUEST_TIMEOUT_SECS) as response:
             return response.read().decode('utf-8')
     except urllib.error.URLError as e:
         print(f"Error fetching {url}: {e}")
@@ -96,7 +98,7 @@ def main():
             continue
             
         md5_asset = None
-        zip_base_name = zip_asset['name'].replace('.zip', '')
+        zip_base_name = zip_asset['name'].removesuffix('.zip')
         for a in assets:
             if a['name'].endswith('.md5') and zip_base_name in a['name']:
                 md5_asset = a
